@@ -1,0 +1,22 @@
+[package]
+name = "rota"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+description = "Generic load balancer over a pool of backends. Distribute outbound traffic across N parallel connections with pluggable strategies (round-robin, lowest-RTT, least-connections, hash-by-addr, weighted, failover, sticky, health-weighted)."
+repository = "https://github.com/shreyansh/rota"
+readme = "README.md"
+keywords = ["load-balancing", "balancer", "networking", "async", "pool"]
+categories = ["network-programming", "asynchronous"]
+
+[dependencies]
+thiserror = "2"
+tokio = { version = "1", features = ["net", "rt", "sync", "time", "io-util", "macros"] }
+tokio-util = "0.7"
+tracing = "0.1"
+async-trait = "0.1"
+rand = "0.8"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
