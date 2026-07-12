@@ -25,7 +25,7 @@ pub struct LoadBalancer {
     strategy: Arc<Mutex<Box<dyn BalanceStrategy>>>,
     _cancel_token: CancellationToken,
     dial_timeout: Option<Duration>,
-    retry_policy: Option<Box<dyn RetryPolicy>>,
+    retry_policy: Option<Arc<dyn RetryPolicy + Send + Sync>>,
 }
 
 impl std::fmt::Debug for LoadBalancer {
@@ -58,7 +58,7 @@ impl LoadBalancer {
         initial_metrics: Vec<TunnelMetrics>,
         strategy: impl BalanceStrategy + 'static,
         dial_timeout: Option<Duration>,
-        retry_policy: Option<Box<dyn RetryPolicy + 'static>>,
+        retry_policy: Option<Arc<dyn RetryPolicy + Send + Sync>>,
     ) -> Result<Self, Error> {
         if backends.is_empty() {
             return Err(Error::NoBackends);
@@ -293,7 +293,7 @@ pub struct LoadBalancerBuilder {
     initial_metrics: Option<Vec<TunnelMetrics>>,
     strategy: Option<Box<dyn BalanceStrategy + 'static>>,
     dial_timeout: Option<Duration>,
-    retry_policy: Option<Box<dyn RetryPolicy + 'static>>,
+    retry_policy: Option<Arc<dyn RetryPolicy + Send + Sync>>,
 }
 
 impl Default for LoadBalancerBuilder {
@@ -352,8 +352,8 @@ impl LoadBalancerBuilder {
     }
 
     /// Set a retry policy for failed dial attempts.
-    pub fn retry_policy(mut self, policy: impl RetryPolicy + 'static) -> Self {
-        self.retry_policy = Some(Box::new(policy));
+    pub fn retry_policy(mut self, policy: impl RetryPolicy + Send + Sync + 'static) -> Self {
+        self.retry_policy = Some(Arc::new(policy));
         self
     }
 
@@ -416,6 +416,13 @@ impl LoadBalancerBuilder {
 pub struct GuardedConnection {
     inner: Connection,
     _guard: ActiveConnectionGuard,
+}
+
+impl GuardedConnection {
+    /// Extract the inner connection, consuming the guard.
+    pub fn into_inner(self) -> Connection {
+        self.inner
+    }
 }
 
 impl std::fmt::Debug for GuardedConnection {

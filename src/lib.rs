@@ -87,15 +87,17 @@
 //!
 //! Dual-licensed under MIT or Apache-2.0 at your option.
 
-mod balancer;
-mod backend;
-mod constants;
-mod error;
-mod factory;
-mod health;
-mod retry;
-mod strategies;
-mod strategy;
+pub mod balancer;
+pub mod backend;
+pub mod constants;
+pub mod error;
+pub mod factory;
+pub mod health;
+pub mod retry;
+pub mod strategies;
+pub mod strategy;
+#[cfg(feature = "tower")]
+pub mod tower;
 
 // Public re-exports.
 pub use balancer::{GuardedConnection, LoadBalancer};
@@ -116,3 +118,6 @@ pub use strategies::{
     failover, hash_by_addr, health_weighted, least_connections, lowest_rtt, random, round_robin,
     sticky, weighted_round_robin,
 };
+
+#[cfg(feature = "tower")]
+pub use tower::{LbRequest, LbResponse};
