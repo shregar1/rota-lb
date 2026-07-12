@@ -44,7 +44,7 @@
 //!         let (a, _b) = duplex(1024);
 //!         Ok(Box::pin(a))
 //!     }
-//!     async fn shutdown(self: Box<Self>) {}
+//!     async fn shutdown(&mut self) {}
 //! }
 //!
 //! # async fn example() -> Result<(), rota::Error> {
@@ -98,6 +98,8 @@ pub mod strategies;
 pub mod strategy;
 #[cfg(feature = "tower")]
 pub mod tower;
+#[cfg(feature = "tls")]
+pub mod tls;
 
 // Public re-exports.
 pub use balancer::{GuardedConnection, LoadBalancer};
@@ -121,3 +123,6 @@ pub use strategies::{
 
 #[cfg(feature = "tower")]
 pub use tower::{LbRequest, LbResponse};
+
+#[cfg(feature = "tls")]
+pub use tls::{TlsBackend, TlsConfig, TlsConnection, TlsError};

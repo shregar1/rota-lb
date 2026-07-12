@@ -48,10 +48,9 @@ pub trait Backend: Send + Sync {
     /// during the connect can be wrapped via `Error::Io`.
     async fn dial(&self, addr: &str) -> Result<Connection, Error>;
 
-    /// Tear down the backend and release any held resources. Consumes the
-    /// boxed backend; called from `LoadBalancer::shutdown`.
+    /// Tear down the backend and release any held resources.
     ///
     /// Implementations should be idempotent (calling `shutdown` twice is
     /// allowed) and should not panic if the backend is already broken.
-    async fn shutdown(self: Box<Self>);
+    async fn shutdown(&mut self);
 }

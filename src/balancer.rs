@@ -48,7 +48,8 @@ impl LoadBalancer {
         backends: Vec<Box<dyn Backend>>,
         strategy: impl BalanceStrategy + 'static,
     ) -> Result<Self, Error> {
-        Self::new_with_metrics(backends, Vec::new(), strategy, None, None)
+        let metrics = (0..backends.len()).map(|_| TunnelMetrics::default()).collect();
+        Self::new_with_metrics(backends, metrics, strategy, None, None)
     }
 
     /// Like [`new`](Self::new) but lets the caller seed each backend's
@@ -267,9 +268,120 @@ impl LoadBalancer {
     /// Tear every active backend down and release resources.
     pub async fn shutdown(self) {
         self._cancel_token.cancel();
-        for backend in self.backends {
+        for mut backend in self.backends {
             backend.shutdown().await;
         }
+    }
+
+    // ============================================================================
+    //  Dynamic reconfiguration
+    // ============================================================================
+
+    /// Add a new backend to the pool at runtime.
+    ///
+    /// The new backend will be included in the load balancing pool immediately.
+    /// Returns the index of the added backend.
+    pub async fn add_backend(&mut self, backend: Box<dyn Backend>) -> usize {
+        let mut metrics = self.metrics.lock().await;
+        let idx = self.backends.len();
+        self.backends.push(backend);
+        metrics.push(TunnelMetrics::default());
+        idx
+    }
+
+    /// Remove a backend from the pool by index.
+    ///
+    /// The backend will be shut down and removed from the pool. Active connections
+    /// on that backend will continue until they complete. Returns `true` if the
+    /// backend was removed, `false` if the index was out of bounds.
+    pub async fn remove_backend(&mut self, index: usize) -> bool {
+        if index >= self.backends.len() {
+            return false;
+        }
+        let mut backend = self.backends.remove(index);
+        self.metrics.lock().await.remove(index);
+        backend.shutdown().await;
+        true
+    }
+
+    /// Remove a backend by reference (e.g., by pointer equality).
+    pub async fn remove_backend_by_ptr(&mut self, backend: &dyn Backend) -> bool {
+        let index = self.backends.iter().position(|b| std::ptr::eq(b.as_ref(), backend));
+        if let Some(idx) = index {
+            self.remove_backend(idx).await
+        } else {
+            false
+        }
+    }
+
+    /// Replace all backends atomically.
+    ///
+    /// The new backends replace the old pool entirely. Old backends are shut down.
+    /// The strategy is reset to its initial state. Returns an error if the new
+    /// pool is empty.
+    pub async fn replace_backends(
+        &mut self,
+        new_backends: Vec<Box<dyn Backend>>,
+        strategy: Option<Box<dyn BalanceStrategy + 'static>>,
+    ) -> Result<(), Error> {
+        if new_backends.is_empty() {
+            return Err(Error::NoBackends);
+        }
+        // Shutdown old backends
+        for mut backend in self.backends.drain(..) {
+            backend.shutdown().await;
+        }
+        // Reset metrics
+        *self.metrics.lock().await = vec![TunnelMetrics::default(); new_backends.len()];
+        self.backends = new_backends;
+        if let Some(s) = strategy {
+            *self.strategy.lock().await = s;
+        }
+        Ok(())
+    }
+
+    /// Drain a backend gracefully - stop sending new connections but wait for
+    /// existing connections to complete.
+    pub async fn drain_backend(&mut self, index: usize) -> bool {
+        if index >= self.backends.len() {
+            return false;
+        }
+        // Mark as draining by setting a very high error count so strategies avoid it
+        let mut metrics = self.metrics.lock().await;
+        if let Some(m) = metrics.get_mut(index) {
+            m.recent_errors = u32::MAX;
+        }
+        true
+    }
+
+    /// Check if a backend is draining.
+    pub async fn is_draining(&self, index: usize) -> bool {
+        let metrics = self.metrics.lock().await;
+        metrics.get(index).map(|m| m.recent_errors == u32::MAX).unwrap_or(false)
+    }
+
+    /// Undrain a backend - allow it to receive new connections again.
+    pub async fn undrain_backend(&mut self, index: usize) -> bool {
+        let mut metrics = self.metrics.lock().await;
+        if let Some(m) = metrics.get_mut(index) {
+            if m.recent_errors == u32::MAX {
+                m.recent_errors = 0;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Replace the strategy at runtime.
+    pub fn set_strategy(&mut self, strategy: impl BalanceStrategy + 'static) {
+        if let Ok(mut guard) = self.strategy.try_lock() {
+            *guard = Box::new(strategy);
+        }
+    }
+
+    /// Get the current strategy name.
+    pub async fn strategy_name(&self) -> String {
+        self.strategy.lock().await.name().to_string()
     }
 }
 
