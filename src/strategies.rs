@@ -10,10 +10,29 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
-use crate::strategy::{BalanceStrategy, PoolView};
+use crate::constants::*;
+use crate::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
 
-#[cfg(test)]
-use crate::strategy::TunnelMetrics;
+/// Calculate weight for weighted round-robin: `max(1, MS_PER_SECOND / rtt_ms)`.
+fn calculate_weight(rtt: Duration) -> u32 {
+    let ms = rtt.as_millis().max(1) as u32;
+    (MS_PER_SECOND / ms).max(MIN_WEIGHT)
+}
+
+/// Find the index of the tunnel with the lowest RTT. Returns 0 if no RTTs available.
+fn find_lowest_rtt(metrics: &[TunnelMetrics]) -> usize {
+    let mut best = 0;
+    let mut best_rtt = Duration::MAX;
+    for (i, m) in metrics.iter().enumerate() {
+        if let Some(rtt) = m.rtt {
+            if rtt < best_rtt {
+                best_rtt = rtt;
+                best = i;
+            }
+        }
+    }
+    best
+}
 
 // ============================================================================
 //  1. RoundRobin
@@ -90,17 +109,7 @@ impl LowestRtt {
 
 impl BalanceStrategy for LowestRtt {
     fn pick(&mut self, view: &PoolView<'_>) -> usize {
-        let mut best = 0;
-        let mut best_rtt = Duration::MAX;
-        for (i, m) in view.metrics.iter().enumerate() {
-            if let Some(rtt) = m.rtt {
-                if rtt < best_rtt {
-                    best_rtt = rtt;
-                    best = i;
-                }
-            }
-        }
-        best
+        find_lowest_rtt(view.metrics)
     }
     fn name(&self) -> &str {
         "lowest_rtt"
@@ -206,11 +215,8 @@ impl WeightedRoundRobin {
         self.sequence.clear();
         for (i, rtt) in self.rtts.iter().enumerate() {
             let weight = match rtt {
-                Some(r) => {
-                    let ms = r.as_millis().max(1) as u32;
-                    (1000 / ms).max(1)
-                }
-                None => 1,
+                Some(r) => calculate_weight(*r),
+                None => MIN_WEIGHT,
             };
             for _ in 0..weight {
                 self.sequence.push(i);
@@ -321,9 +327,9 @@ impl BalanceStrategy for HealthWeighted {
         let mut best = 0;
         let mut best_score = u64::MAX;
         for (i, m) in view.metrics.iter().enumerate() {
-            let rtt_us = m.rtt.map(|r| r.as_micros() as u64).unwrap_or(1_000_000);
-            let error_penalty = m.recent_errors as u64 * 500_000;
-            let load_penalty = m.active_connections as u64 * 10_000;
+            let rtt_us = m.rtt.map(|r| r.as_micros() as u64).unwrap_or(DEFAULT_RTT_US);
+            let error_penalty = m.recent_errors as u64 * ERROR_PENALTY_US;
+            let load_penalty = m.active_connections as u64 * LOAD_PENALTY_US;
             let score = rtt_us + error_penalty + load_penalty;
             if score < best_score {
                 best_score = score;
@@ -365,16 +371,7 @@ impl BalanceStrategy for Sticky {
             return idx.min(view.len().saturating_sub(1));
         }
         // First pick: choose the best (lowest RTT). Tiebreak by index.
-        let mut best = 0;
-        let mut best_rtt = Duration::MAX;
-        for (i, m) in view.metrics.iter().enumerate() {
-            if let Some(rtt) = m.rtt {
-                if rtt < best_rtt {
-                    best_rtt = rtt;
-                    best = i;
-                }
-            }
-        }
+        let best = find_lowest_rtt(view.metrics);
         self.pinned = Some(best);
         best
     }

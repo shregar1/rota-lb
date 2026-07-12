@@ -89,16 +89,22 @@
 
 mod balancer;
 mod backend;
+mod constants;
 mod error;
 mod factory;
+mod health;
+mod retry;
 mod strategies;
 mod strategy;
 
 // Public re-exports.
 pub use balancer::{GuardedConnection, LoadBalancer};
 pub use backend::{Backend, Connection};
+pub use constants::*;
 pub use error::Error;
 pub use factory::{BackendFactory, BackendOutput};
+pub use health::{HealthCheckConfig, HealthChecker, HealthState, is_healthy, record_dial_result};
+pub use retry::{ExponentialBackoff, FixedRetry, NoRetry, RetryOnError, RetryPolicy, RetryPolicyBuilder, is_transient_error};
 pub use strategy::{BalanceStrategy, PoolView, TunnelMetrics};
 pub use strategies::{
     Failover, HashByAddr, HealthWeighted, LeastConnections, LowestRtt, Random, RoundRobin,

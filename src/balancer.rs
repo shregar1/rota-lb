@@ -3,15 +3,18 @@
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Duration;
 use std::io;
 
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, warn};
 
 use crate::backend::{Backend, Connection};
 use crate::error::Error;
 use crate::factory::{BackendFactory, BackendOutput};
+use crate::retry::RetryPolicy;
 use crate::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
 
 /// The load balancer: N backends, dial distributed across them by the
@@ -21,6 +24,8 @@ pub struct LoadBalancer {
     metrics: Arc<Mutex<Vec<TunnelMetrics>>>,
     strategy: Arc<Mutex<Box<dyn BalanceStrategy>>>,
     _cancel_token: CancellationToken,
+    dial_timeout: Option<Duration>,
+    retry_policy: Option<Box<dyn RetryPolicy>>,
 }
 
 impl std::fmt::Debug for LoadBalancer {
@@ -43,7 +48,7 @@ impl LoadBalancer {
         backends: Vec<Box<dyn Backend>>,
         strategy: impl BalanceStrategy + 'static,
     ) -> Result<Self, Error> {
-        Self::new_with_metrics(backends, Vec::new(), strategy)
+        Self::new_with_metrics(backends, Vec::new(), strategy, None, None)
     }
 
     /// Like [`new`](Self::new) but lets the caller seed each backend's
@@ -52,6 +57,8 @@ impl LoadBalancer {
         backends: Vec<Box<dyn Backend>>,
         initial_metrics: Vec<TunnelMetrics>,
         strategy: impl BalanceStrategy + 'static,
+        dial_timeout: Option<Duration>,
+        retry_policy: Option<Box<dyn RetryPolicy + 'static>>,
     ) -> Result<Self, Error> {
         if backends.is_empty() {
             return Err(Error::NoBackends);
@@ -68,6 +75,8 @@ impl LoadBalancer {
             metrics: Arc::new(Mutex::new(initial_metrics)),
             strategy: Arc::new(Mutex::new(Box::new(strategy))),
             _cancel_token: CancellationToken::new(),
+            dial_timeout,
+            retry_policy,
         })
     }
 
@@ -93,6 +102,8 @@ impl LoadBalancer {
             metrics: Arc::new(Mutex::new(metrics)),
             strategy: Arc::new(Mutex::new(Box::new(strategy))),
             _cancel_token: CancellationToken::new(),
+            dial_timeout: None,
+            retry_policy: None,
         })
     }
 
@@ -132,36 +143,114 @@ impl LoadBalancer {
             let idx = strategy.pick(&view);
             metrics[idx].active_connections += 1;
             metrics[idx].total_dials += 1;
+            debug!(
+                backend_idx = idx,
+                addr = %addr,
+                strategy = %strategy.name(),
+                "selected backend for dial"
+            );
             idx
         };
 
-        // Open the connection. On failure, roll back the counter and
-        // notify the strategy so it can adapt (e.g. Failover rotates).
-        let conn_result = self.backends[idx].dial(addr).await;
-        let conn = match conn_result {
-            Ok(c) => c,
-            Err(e) => {
-                let mut metrics = self.metrics.lock().await;
-                metrics[idx].active_connections =
-                    metrics[idx].active_connections.saturating_sub(1);
-                metrics[idx].total_errors += 1;
-                metrics[idx].recent_errors += 1;
-                drop(metrics);
-                let mut strategy = self.strategy.lock().await;
-                strategy.report_error(idx);
-                return Err(e);
+        // Try to connect with retry logic
+        let mut attempt = 0u32;
+        let start = std::time::Instant::now();
+        
+        loop {
+            // Open the connection with optional timeout
+            let dial_fut = self.backends[idx].dial(addr);
+            let conn_result = if let Some(timeout) = self.dial_timeout {
+                match tokio::time::timeout(timeout, dial_fut).await {
+                    Ok(result) => result,
+                    Err(_) => Err(Error::Backend("dial timeout".into())),
+                }
+            } else {
+                dial_fut.await
+            };
+
+            match conn_result {
+                Ok(conn) => {
+                    debug!(
+                        backend_idx = idx,
+                        attempt = attempt + 1,
+                        elapsed_ms = start.elapsed().as_millis(),
+                        "dial succeeded"
+                    );
+                    let guard = ActiveConnectionGuard {
+                        metrics: self.metrics.clone(),
+                        index: idx,
+                    };
+
+                    return Ok(GuardedConnection {
+                        inner: conn,
+                        _guard: guard,
+                    });
+                }
+                Err(e) => {
+                    attempt += 1;
+                    warn!(
+                        backend_idx = idx,
+                        attempt,
+                        error = %e,
+                        "dial failed"
+                    );
+
+                    // Check retry policy
+                    let should_retry = if let Some(policy) = &self.retry_policy {
+                        // Check total timeout budget
+                        if let Some(total_timeout) = policy.total_timeout() {
+                            if start.elapsed() >= total_timeout {
+                                false
+                            } else {
+                                policy.should_retry(attempt, &e).is_some()
+                            }
+                        } else {
+                            policy.should_retry(attempt, &e).is_some()
+                        }
+                    } else {
+                        false
+                    };
+
+                    if !should_retry {
+                        // No more retries - roll back and return error
+                        let mut metrics = self.metrics.lock().await;
+                        metrics[idx].active_connections =
+                            metrics[idx].active_connections.saturating_sub(1);
+                        metrics[idx].total_errors += 1;
+                        metrics[idx].recent_errors += 1;
+                        drop(metrics);
+                        let mut strategy = self.strategy.lock().await;
+                        strategy.report_error(idx);
+                        return Err(e);
+                    }
+
+                    // Wait for the retry delay
+                    if let Some(policy) = &self.retry_policy {
+                        if let Some(delay) = policy.should_retry(attempt, &e) {
+                            debug!(
+                                backend_idx = idx,
+                                attempt,
+                                delay_ms = delay.as_millis(),
+                                "retrying dial after delay"
+                            );
+                            tokio::time::sleep(delay).await;
+                            continue;
+                        }
+                    }
+
+                    // No delay returned from policy - give up
+                    let mut metrics = self.metrics.lock().await;
+                    metrics[idx].active_connections =
+                        metrics[idx].active_connections.saturating_sub(1);
+                    metrics[idx].total_errors += 1;
+                    metrics[idx].recent_errors += 1;
+                    drop(metrics);
+                    let mut strategy = self.strategy.lock().await;
+                    strategy.report_error(idx);
+                    return Err(e);
+                }
             }
-        };
-
-        let guard = ActiveConnectionGuard {
-            metrics: self.metrics.clone(),
-            index: idx,
-        };
-
-        Ok(GuardedConnection {
-            inner: conn,
-            _guard: guard,
-        })
+        }
     }
 
     /// Read-only access to the live per-backend metrics. Useful for logging
@@ -203,6 +292,8 @@ pub struct LoadBalancerBuilder {
     factories: Option<Vec<Box<dyn BackendFactory>>>,
     initial_metrics: Option<Vec<TunnelMetrics>>,
     strategy: Option<Box<dyn BalanceStrategy + 'static>>,
+    dial_timeout: Option<Duration>,
+    retry_policy: Option<Box<dyn RetryPolicy + 'static>>,
 }
 
 impl Default for LoadBalancerBuilder {
@@ -212,6 +303,8 @@ impl Default for LoadBalancerBuilder {
             factories: None,
             initial_metrics: None,
             strategy: None,
+            dial_timeout: None,
+            retry_policy: None,
         }
     }
 }
@@ -252,9 +345,23 @@ impl LoadBalancerBuilder {
         self
     }
 
+    /// Set a timeout for each dial attempt. If not set, no timeout is applied.
+    pub fn dial_timeout(mut self, timeout: Duration) -> Self {
+        self.dial_timeout = Some(timeout);
+        self
+    }
+
+    /// Set a retry policy for failed dial attempts.
+    pub fn retry_policy(mut self, policy: impl RetryPolicy + 'static) -> Self {
+        self.retry_policy = Some(Box::new(policy));
+        self
+    }
+
     /// Build the load balancer. Exactly one of `backends` or `factories` must be set.
     pub async fn build(self) -> Result<LoadBalancer, Error> {
         let strategy = self.strategy.ok_or_else(|| Error::Factory("strategy required".into()))?;
+        let dial_timeout = self.dial_timeout;
+        let retry_policy = self.retry_policy;
 
         match (self.backends, self.factories) {
             (Some(backends), None) => {
@@ -266,7 +373,7 @@ impl LoadBalancerBuilder {
                         backends.len()
                     )));
                 }
-                LoadBalancer::new_with_metrics(backends, metrics, strategy)
+                LoadBalancer::new_with_metrics(backends, metrics, strategy, dial_timeout, retry_policy)
             }
             (None, Some(factories)) => {
                 let metrics = self.initial_metrics.unwrap_or_default();
@@ -290,7 +397,7 @@ impl LoadBalancerBuilder {
                 }
                 // Use caller-provided metrics if any, otherwise use factory-provided
                 let final_metrics = if !metrics.is_empty() { metrics } else { created_metrics };
-                LoadBalancer::new_with_metrics(created_backends, final_metrics, strategy)
+                LoadBalancer::new_with_metrics(created_backends, final_metrics, strategy, dial_timeout, retry_policy)
             }
             (Some(_), Some(_)) => Err(Error::Factory("cannot set both backends and factories".into())),
             (None, None) => Err(Error::Factory("backends or factories required".into())),
