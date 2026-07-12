@@ -90,6 +90,8 @@
 pub mod balancer;
 pub mod backend;
 pub mod constants;
+#[cfg(feature = "discovery")]
+pub mod discovery;
 pub mod error;
 pub mod factory;
 pub mod health;
@@ -113,6 +115,12 @@ pub use strategy::{BalanceStrategy, PoolView, TunnelMetrics};
 pub use strategies::{
     Failover, HashByAddr, HealthWeighted, LeastConnections, LowestRtt, Random, RoundRobin,
     Sticky, WeightedRoundRobin,
+};
+
+// Discovery
+#[cfg(feature = "discovery")]
+pub use discovery::{
+    BackendDescriptor, BackendFactoryFromDescriptor, Discover, ServiceDiscovery, StaticDiscovery,
 };
 
 // Free constructors returning Box<dyn BalanceStrategy>.
