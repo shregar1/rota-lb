@@ -96,6 +96,23 @@ impl LoadBalancer {
         })
     }
 
+    /// Create a new [`LoadBalancerBuilder`] for ergonomic configuration.
+    ///
+    /// # Example
+    /// ```
+    /// # use rota::{Backend, Connection, LoadBalancer, round_robin, Error};
+    /// # async fn example() -> Result<(), Error> {
+    /// let backends: Vec<Box<dyn Backend>> = vec![]; // your backends here
+    /// let lb = LoadBalancer::builder()
+    ///     .backends(backends)
+    ///     .strategy(round_robin())
+    ///     .build().await?;
+    /// # Ok(()) }
+    /// ```
+    pub fn builder() -> LoadBalancerBuilder {
+        LoadBalancerBuilder::default()
+    }
+
     /// Open a TCP connection through one of the active backends, chosen by
     /// the configured strategy. Returns a [`GuardedConnection`] which
     /// implements `AsyncRead + AsyncWrite` and decrements the backend's
@@ -163,6 +180,120 @@ impl LoadBalancer {
         self._cancel_token.cancel();
         for backend in self.backends {
             backend.shutdown().await;
+        }
+    }
+}
+
+/// Builder for [`LoadBalancer`]. Provides a fluent API for configuring
+/// the balancer before construction.
+///
+/// # Example
+/// ```
+/// # use rota::{Backend, Connection, LoadBalancer, round_robin, Error};
+/// # async fn example() -> Result<(), Error> {
+/// let backends: Vec<Box<dyn Backend>> = vec![]; // your backends here
+/// let lb = LoadBalancer::builder()
+///     .backends(backends)
+///     .strategy(round_robin())
+///     .build().await?;
+/// # Ok(()) }
+/// ```
+pub struct LoadBalancerBuilder {
+    backends: Option<Vec<Box<dyn Backend>>>,
+    factories: Option<Vec<Box<dyn BackendFactory>>>,
+    initial_metrics: Option<Vec<TunnelMetrics>>,
+    strategy: Option<Box<dyn BalanceStrategy + 'static>>,
+}
+
+impl Default for LoadBalancerBuilder {
+    fn default() -> Self {
+        Self {
+            backends: None,
+            factories: None,
+            initial_metrics: None,
+            strategy: None,
+        }
+    }
+}
+
+impl std::fmt::Debug for LoadBalancerBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoadBalancerBuilder")
+            .field("backends_count", &self.backends.as_ref().map(|b| b.len()))
+            .field("factories_count", &self.factories.as_ref().map(|b| b.len()))
+            .field("has_initial_metrics", &self.initial_metrics.is_some())
+            .field("has_strategy", &self.strategy.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl LoadBalancerBuilder {
+    /// Set the pre-constructed backends. Mutually exclusive with [`factories`](Self::factories).
+    pub fn backends(mut self, backends: Vec<Box<dyn Backend>>) -> Self {
+        self.backends = Some(backends);
+        self
+    }
+
+    /// Set backend factories for lazy construction. Mutually exclusive with [`backends`](Self::backends).
+    pub fn factories(mut self, factories: Vec<Box<dyn BackendFactory>>) -> Self {
+        self.factories = Some(factories);
+        self
+    }
+
+    /// Seed initial metrics for each backend. Must match the number of backends/factories.
+    pub fn initial_metrics(mut self, metrics: Vec<TunnelMetrics>) -> Self {
+        self.initial_metrics = Some(metrics);
+        self
+    }
+
+    /// Set the load balancing strategy.
+    pub fn strategy(mut self, strategy: impl BalanceStrategy + 'static) -> Self {
+        self.strategy = Some(Box::new(strategy));
+        self
+    }
+
+    /// Build the load balancer. Exactly one of `backends` or `factories` must be set.
+    pub async fn build(self) -> Result<LoadBalancer, Error> {
+        let strategy = self.strategy.ok_or_else(|| Error::Factory("strategy required".into()))?;
+
+        match (self.backends, self.factories) {
+            (Some(backends), None) => {
+                let metrics = self.initial_metrics.unwrap_or_default();
+                if !metrics.is_empty() && metrics.len() != backends.len() {
+                    return Err(Error::Factory(format!(
+                        "initial_metrics.len() ({}) must equal backends.len() ({})",
+                        metrics.len(),
+                        backends.len()
+                    )));
+                }
+                LoadBalancer::new_with_metrics(backends, metrics, strategy)
+            }
+            (None, Some(factories)) => {
+                let metrics = self.initial_metrics.unwrap_or_default();
+                if !metrics.is_empty() && metrics.len() != factories.len() {
+                    return Err(Error::Factory(format!(
+                        "initial_metrics.len() ({}) must equal factories.len() ({})",
+                        metrics.len(),
+                        factories.len()
+                    )));
+                }
+                // For factories, we need to create them first then build
+                if factories.is_empty() {
+                    return Err(Error::NoBackends);
+                }
+                let mut created_backends = Vec::with_capacity(factories.len());
+                let mut created_metrics = Vec::with_capacity(factories.len());
+                for f in &factories {
+                    let BackendOutput { backend, initial_metrics } = f.create().await?;
+                    created_backends.push(backend);
+                    created_metrics.push(initial_metrics);
+                }
+                // Use caller-provided metrics if any, otherwise use factory-provided
+                let final_metrics = if !metrics.is_empty() { metrics } else { created_metrics };
+                LoadBalancer::new_with_metrics(created_backends, final_metrics, strategy)
+            }
+            (Some(_), Some(_)) => Err(Error::Factory("cannot set both backends and factories".into())),
+            (None, None) => Err(Error::Factory("backends or factories required".into())),
         }
     }
 }
