@@ -41,13 +41,15 @@ mod tower_impl {
         }
 
         /// Set a per-request dial timeout.
-        pub fn with_dial_timeout(mut self, timeout: std::time::Duration) -> Self {
+        #[must_use]
+        pub const fn with_dial_timeout(mut self, timeout: std::time::Duration) -> Self {
             self.dial_timeout = Some(timeout);
             self
         }
 
         /// Set a per-request retry policy.
-        pub fn with_retry_policy(mut self, policy: impl RetryPolicy + Send + Sync + 'static) -> Self {
+        #[must_use]
+        pub fn with_retry_policy(mut self, policy: impl RetryPolicy + 'static) -> Self {
             self.retry_policy = Some(Arc::new(policy));
             self
         }

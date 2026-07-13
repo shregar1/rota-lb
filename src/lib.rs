@@ -94,6 +94,8 @@ pub mod constants;
 pub mod discovery;
 pub mod error;
 pub mod factory;
+#[cfg(feature = "ffi")]
+pub mod ffi;
 pub mod health;
 pub mod retry;
 pub mod strategies;

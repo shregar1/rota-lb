@@ -10,14 +10,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
-use crate::constants::*;
+use crate::constants::{DEFAULT_RTT_US, ERROR_PENALTY_US, LOAD_PENALTY_US, MIN_WEIGHT, MS_PER_SECOND, STRATEGY_NAMES};
 use crate::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
-
-/// Calculate weight for weighted round-robin: `max(1, MS_PER_SECOND / rtt_ms)`.
-fn calculate_weight(rtt: Duration) -> u32 {
-    let ms = rtt.as_millis().max(1) as u32;
-    (MS_PER_SECOND / ms).max(MIN_WEIGHT)
-}
 
 /// Find the index of the tunnel with the lowest RTT. Returns 0 if no RTTs available.
 fn find_lowest_rtt(metrics: &[TunnelMetrics]) -> usize {
@@ -45,9 +39,15 @@ pub struct RoundRobin {
     next: usize,
 }
 
+impl Default for RoundRobin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RoundRobin {
     /// Create a new round-robin strategy starting at index 0.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { next: 0 }
     }
 }
@@ -61,7 +61,7 @@ impl BalanceStrategy for RoundRobin {
         idx
     }
     fn name(&self) -> &str {
-        "round_robin"
+        STRATEGY_NAMES[0]
     }
 }
 
@@ -74,19 +74,26 @@ impl BalanceStrategy for RoundRobin {
 #[derive(Debug, Clone, Copy)]
 pub struct Random;
 
+impl Default for Random {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Random {
     /// Create a new random strategy.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }
 
 impl BalanceStrategy for Random {
     fn pick(&mut self, view: &PoolView<'_>) -> usize {
-        rand::random::<usize>() % view.len()
+        use rand::Rng;
+        rand::thread_rng().gen_range(0..view.len())
     }
     fn name(&self) -> &str {
-        "random"
+        STRATEGY_NAMES[1]
     }
 }
 
@@ -100,9 +107,15 @@ impl BalanceStrategy for Random {
 #[derive(Debug, Clone, Copy)]
 pub struct LowestRtt;
 
+impl Default for LowestRtt {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LowestRtt {
     /// Create a new lowest-RTT strategy.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -112,7 +125,7 @@ impl BalanceStrategy for LowestRtt {
         find_lowest_rtt(view.metrics)
     }
     fn name(&self) -> &str {
-        "lowest_rtt"
+        STRATEGY_NAMES[2]
     }
 }
 
@@ -126,9 +139,15 @@ impl BalanceStrategy for LowestRtt {
 #[derive(Debug, Clone, Copy)]
 pub struct LeastConnections;
 
+impl Default for LeastConnections {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LeastConnections {
     /// Create a new least-connections strategy.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -152,7 +171,7 @@ impl BalanceStrategy for LeastConnections {
         best
     }
     fn name(&self) -> &str {
-        "least_connections"
+        STRATEGY_NAMES[3]
     }
 }
 
@@ -161,15 +180,22 @@ impl BalanceStrategy for LeastConnections {
 // ============================================================================
 
 /// Hash the dial address modulo the tunnel count. The same hostname always
-/// goes to the same tunnel — best for HTTP/HTTPS keep-alive, server-side
-/// connection caching, and any protocol that benefits from sticky
+/// goes to the same tunnel — best for HTTP/HTTPS keep-alive.
+///
+/// Server-side connection caching and any protocol that benefits from sticky
 /// connections.
 #[derive(Debug, Clone, Copy)]
 pub struct HashByAddr;
 
+impl Default for HashByAddr {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HashByAddr {
     /// Create a new hash-by-address strategy.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -178,10 +204,11 @@ impl BalanceStrategy for HashByAddr {
     fn pick(&mut self, view: &PoolView<'_>) -> usize {
         let mut hasher = DefaultHasher::new();
         view.dial_addr.hash(&mut hasher);
-        (hasher.finish() as usize) % view.len()
+        let hash = usize::try_from(hasher.finish()).unwrap_or(0);
+        hash % view.len()
     }
     fn name(&self) -> &str {
-        "hash_by_addr"
+        STRATEGY_NAMES[4]
     }
 }
 
@@ -194,58 +221,71 @@ impl BalanceStrategy for HashByAddr {
 /// tunnel goes idle as long as there's any weight on it.
 ///
 /// Weight = `max(1, 1000 / rtt_ms)`. Tunnels with no RTT get weight 1.
+///
+/// Uses a virtual scheduler instead of materializing the full weight
+/// sequence, avoiding unbounded memory for large pools.
 #[derive(Debug, Clone)]
 pub struct WeightedRoundRobin {
     rtts: Vec<Option<Duration>>,
-    sequence: Vec<usize>,
-    cursor: usize,
+    weights: Vec<u32>,
+    picks: Vec<u64>,
+}
+
+impl Default for WeightedRoundRobin {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WeightedRoundRobin {
     /// Create a new weighted round-robin strategy.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             rtts: Vec::new(),
-            sequence: Vec::new(),
-            cursor: 0,
+            weights: Vec::new(),
+            picks: Vec::new(),
         }
     }
 
     fn rebuild(&mut self) {
-        self.sequence.clear();
-        for (i, rtt) in self.rtts.iter().enumerate() {
-            let weight = match rtt {
-                Some(r) => calculate_weight(*r),
-                None => MIN_WEIGHT,
-            };
-            for _ in 0..weight {
-                self.sequence.push(i);
-            }
+        self.weights.clear();
+        for rtt in &self.rtts {
+            let weight = rtt.as_ref().map_or(MIN_WEIGHT, |r| {
+                let ms = u64::try_from(r.as_millis()).unwrap_or(1).max(1);
+                u32::try_from((u64::from(MS_PER_SECOND) / ms).max(u64::from(MIN_WEIGHT)))
+                    .unwrap_or(MIN_WEIGHT)
+            });
+            self.weights.push(weight);
         }
-        self.cursor = 0;
+        self.picks = vec![0; self.weights.len()];
     }
 }
 
 impl BalanceStrategy for WeightedRoundRobin {
     fn pick(&mut self, view: &PoolView<'_>) -> usize {
-        // Rebuild the sequence whenever the RTT set changes.
         let new_rtts: Vec<Option<Duration>> = view.metrics.iter().map(|m| m.rtt).collect();
         if new_rtts != self.rtts {
             self.rtts = new_rtts;
             self.rebuild();
         }
-        if self.sequence.is_empty() {
+        if self.weights.is_empty() {
             return 0;
         }
-        if self.cursor >= self.sequence.len() {
-            self.rebuild();
+
+        let n = self.weights.len();
+        let mut best = 0;
+        for i in 1..n {
+            if self.picks[i] * u64::from(self.weights[best])
+                < self.picks[best] * u64::from(self.weights[i])
+            {
+                best = i;
+            }
         }
-        let idx = self.sequence[self.cursor];
-        self.cursor += 1;
-        idx
+        self.picks[best] += 1;
+        best
     }
     fn name(&self) -> &str {
-        "weighted_round_robin"
+        STRATEGY_NAMES[5]
     }
 }
 
@@ -265,16 +305,16 @@ pub struct Failover {
     len: usize,
 }
 
-impl Failover {
-    /// Create a new failover strategy.
-    pub fn new() -> Self {
-        Self { primary: 0, len: 0 }
-    }
-}
-
 impl Default for Failover {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Failover {
+    /// Create a new failover strategy.
+    pub const fn new() -> Self {
+        Self { primary: 0, len: 0 }
     }
 }
 
@@ -287,14 +327,12 @@ impl BalanceStrategy for Failover {
         self.primary % self.len
     }
     fn name(&self) -> &str {
-        "failover"
+        STRATEGY_NAMES[6]
     }
     fn report_error(&mut self, idx: usize) {
-        if self.len == 0 {
-            return;
-        }
+        let len = if self.len > 0 { self.len } else { idx + 1 };
         if idx == self.primary {
-            self.primary = (idx + 1) % self.len;
+            self.primary = (idx + 1) % len;
         }
     }
 }
@@ -315,9 +353,15 @@ impl BalanceStrategy for Failover {
 #[derive(Debug, Clone, Copy)]
 pub struct HealthWeighted;
 
+impl Default for HealthWeighted {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HealthWeighted {
     /// Create a new health-weighted strategy.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -327,9 +371,9 @@ impl BalanceStrategy for HealthWeighted {
         let mut best = 0;
         let mut best_score = u64::MAX;
         for (i, m) in view.metrics.iter().enumerate() {
-            let rtt_us = m.rtt.map(|r| r.as_micros() as u64).unwrap_or(DEFAULT_RTT_US);
-            let error_penalty = m.recent_errors as u64 * ERROR_PENALTY_US;
-            let load_penalty = m.active_connections as u64 * LOAD_PENALTY_US;
+            let rtt_us = m.rtt.map_or(DEFAULT_RTT_US, |r| u64::try_from(r.as_micros()).unwrap_or(DEFAULT_RTT_US));
+            let error_penalty = u64::from(m.recent_errors) * ERROR_PENALTY_US;
+            let load_penalty = u64::from(m.active_connections) * LOAD_PENALTY_US;
             let score = rtt_us + error_penalty + load_penalty;
             if score < best_score {
                 best_score = score;
@@ -339,7 +383,7 @@ impl BalanceStrategy for HealthWeighted {
         best
     }
     fn name(&self) -> &str {
-        "health_weighted"
+        STRATEGY_NAMES[7]
     }
 }
 
@@ -358,9 +402,15 @@ pub struct Sticky {
     pinned: Option<usize>,
 }
 
+impl Default for Sticky {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Sticky {
     /// Create a new sticky strategy.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { pinned: None }
     }
 }
@@ -376,9 +426,8 @@ impl BalanceStrategy for Sticky {
         best
     }
     fn name(&self) -> &str {
-        "sticky"
+        STRATEGY_NAMES[8]
     }
-    // Errors do NOT release the pin. That's the point of sticky.
     fn report_error(&mut self, _idx: usize) {}
 }
 
@@ -469,7 +518,7 @@ mod tests {
         let mut s = HashByAddr::new();
         let mut hits = [0usize; 3];
         for i in 0..30 {
-            let addr = format!("host{}.example.com:80", i);
+            let addr = format!("host{i}.example.com:80");
             let metrics = make_metrics(&[Some(10), Some(20), Some(30)], &[0; 3]);
             let v = PoolView { dial_addr: &addr, metrics: &metrics };
             hits[s.pick(&v)] += 1;
@@ -492,6 +541,9 @@ mod tests {
 
     #[test]
     fn weighted_round_robin_walks_through_sequence() {
+        // With RTT weights 333ms, 1000ms, 1000ms (weights 3, 1, 1),
+        // the virtual scheduler picks: 0, 1, 2, 0, 0 (interleaved by
+        // picks[i] / weights[i] ratio).
         let mut s = WeightedRoundRobin::new();
         let metrics = make_metrics(&[Some(333), Some(1000), Some(1000)], &[0; 3]);
         let v = PoolView { dial_addr: "h", metrics: &metrics };
@@ -499,7 +551,7 @@ mod tests {
         for _ in 0..5 {
             seq.push(s.pick(&v));
         }
-        assert_eq!(seq, vec![0, 0, 0, 1, 2]);
+        assert_eq!(seq, vec![0, 1, 2, 0, 0]);
     }
 
     #[test]
@@ -697,7 +749,7 @@ mod constructor_tests {
             health_weighted(),
             sticky(),
         ];
-        for s in strategies.iter_mut() {
+        for s in &mut strategies {
             let _ = s.name();
             assert!(s.pick(&v) < 2);
         }

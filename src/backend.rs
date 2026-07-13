@@ -1,13 +1,7 @@
 //! The `Backend` trait and the `Connection` type returned by `dial`.
 //!
 //! `Backend` is the minimum interface the load balancer needs to work with any
-//! "backend" or "pool member". The only requirement is
-//! `dial(addr) -> Connection` (a tokio I/O stream) and `shutdown` (cleanup).
-//!
-//! This is what makes the load balancer generic: implement `Backend` for
-//! VPN tunnels, SSH tunnels, WireGuard, SOCKS5 proxies, HTTP CONNECT proxies,
-//! database connection pools, API endpoint pools, etc., and the load balancer
-//! works with all of them identically.
+//! "backend" or "pool member".
 
 use std::pin::Pin;
 
@@ -17,9 +11,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use crate::error::Error;
 
 /// A bidirectional byte stream — anything that implements tokio's
-/// `AsyncRead + AsyncWrite` and is `Send`. The exact type is hidden behind
-/// a `Pin<Box<dyn ...>>` so any concrete stream type can be returned by any
-/// backend impl.
+/// `AsyncRead + AsyncWrite` and is `Send`.
+///
+/// The exact type is hidden behind a `Pin<Box<dyn ...>>` so any concrete
+/// stream type can be returned by any backend impl.
 pub type Connection = Pin<Box<dyn AsyncConnection + Send>>;
 
 /// A bidirectional, `Send` async stream. This is a sealed super-trait of

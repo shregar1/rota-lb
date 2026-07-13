@@ -10,6 +10,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
+use crate::constants::DEFAULT_HEALTH_CHECK_INTERVAL;
+
 use crate::balancer::LoadBalancer;
 use crate::backend::Backend;
 use crate::error::Error;
@@ -46,18 +48,21 @@ impl BackendDescriptor {
     }
 
     /// Add a metadata tag.
+    #[must_use]
     pub fn with_tag(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.metadata.insert(key.into(), value.into());
         self
     }
 
     /// Set weight for weighted strategies.
-    pub fn with_weight(mut self, weight: u32) -> Self {
+    #[must_use]
+    pub const fn with_weight(mut self, weight: u32) -> Self {
         self.weight = Some(weight);
         self
     }
 
     /// Set health check endpoint.
+    #[must_use]
     pub fn with_health_check(mut self, health_check: impl Into<String>) -> Self {
         self.health_check = Some(health_check.into());
         self
@@ -80,7 +85,7 @@ pub trait ServiceDiscovery: Send + Sync {
     /// Optional: get the suggested poll interval.
     /// Default is 30 seconds.
     fn poll_interval(&self) -> Duration {
-        Duration::from_secs(30)
+        DEFAULT_HEALTH_CHECK_INTERVAL
     }
 
     /// Optional: called when discovery starts.
@@ -119,7 +124,8 @@ pub struct StaticDiscovery {
 
 impl StaticDiscovery {
     /// Create a new static discovery source.
-    pub fn new(descriptors: Vec<BackendDescriptor>) -> Self {
+    #[must_use]
+    pub const fn new(descriptors: Vec<BackendDescriptor>) -> Self {
         Self { descriptors }
     }
 
@@ -144,9 +150,9 @@ impl ServiceDiscovery for StaticDiscovery {
 /// A `LoadBalancer` that automatically reconciles its backends with
 /// a `ServiceDiscovery` source.
 pub struct Discover<D: ServiceDiscovery + 'static, F: BackendFactoryFromDescriptor + 'static> {
-    lb: Arc<LoadBalancer>,
-    discovery: D,
-    factory: F,
+    lb: Arc<tokio::sync::Mutex<LoadBalancer>>,
+    discovery: Arc<D>,
+    factory: Arc<F>,
     poll_interval: Duration,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
@@ -158,12 +164,12 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Discover")
-            .field("backend_count", &self.lb.backend_count())
+            .field("backend_count", &"<locked>")
             .finish_non_exhaustive()
     }
 }
 
-impl<D: ServiceDiscovery + Clone + 'static, F: BackendFactoryFromDescriptor + Clone + 'static> Discover<D, F> {
+impl<D: ServiceDiscovery + 'static, F: BackendFactoryFromDescriptor + 'static> Discover<D, F> {
     /// Create a new `Discover` wrapper.
     ///
     /// - `lb`: The load balancer to manage.
@@ -178,9 +184,9 @@ impl<D: ServiceDiscovery + Clone + 'static, F: BackendFactoryFromDescriptor + Cl
     ) -> Self {
         let pi = discovery.poll_interval();
         Self {
-            lb: Arc::new(lb),
-            discovery,
-            factory,
+            lb: Arc::new(tokio::sync::Mutex::new(lb)),
+            discovery: Arc::new(discovery),
+            factory: Arc::new(factory),
             poll_interval: poll_interval.unwrap_or(pi),
             shutdown_tx: None,
         }
@@ -189,7 +195,7 @@ impl<D: ServiceDiscovery + Clone + 'static, F: BackendFactoryFromDescriptor + Cl
     /// Start the background discovery loop.
     pub async fn start(&mut self) -> Result<(), Error> {
         self.discovery.on_start().await?;
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
         self.shutdown_tx = Some(shutdown_tx);
 
         let lb = self.lb.clone();
@@ -205,6 +211,7 @@ impl<D: ServiceDiscovery + Clone + 'static, F: BackendFactoryFromDescriptor + Cl
     }
 
     /// Stop the background discovery loop.
+    #[allow(clippy::unused_async)]
     pub async fn stop(&mut self) -> Result<(), Error> {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
@@ -212,20 +219,20 @@ impl<D: ServiceDiscovery + Clone + 'static, F: BackendFactoryFromDescriptor + Cl
         Ok(())
     }
 
-    /// Get a reference to the inner load balancer.
-    pub fn load_balancer(&self) -> &LoadBalancer {
-        &self.lb
+    /// Get a clone of the inner load balancer's Arc for direct access.
+    pub fn load_balancer_arc(&self) -> Arc<tokio::sync::Mutex<LoadBalancer>> {
+        self.lb.clone()
     }
 
     /// Dial through the load balancer (convenience method).
     pub async fn dial(&self, addr: &str) -> Result<crate::balancer::GuardedConnection, Error> {
-        self.lb.dial(addr).await
+        self.lb.lock().await.dial(addr).await
     }
 
     async fn run_loop(
-        lb: Arc<LoadBalancer>,
-        discovery: D,
-        factory: F,
+        lb: Arc<tokio::sync::Mutex<LoadBalancer>>,
+        discovery: Arc<D>,
+        factory: Arc<F>,
         interval: Duration,
         mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     ) {
@@ -237,12 +244,13 @@ impl<D: ServiceDiscovery + Clone + 'static, F: BackendFactoryFromDescriptor + Cl
                 _ = interval_timer.tick() => {
                     match discovery.discover().await {
                         Ok(descriptors) => {
-                            if let Err(e) = Self::reconcile(&lb, descriptors, &factory).await {
-                                tracing::warn!("Failed to reconcile backends: {}", e);
+                            let mut lb = lb.lock().await;
+                            if let Err(e) = Self::reconcile(&mut lb, descriptors, &*factory).await {
+                                tracing::warn!("Failed to reconcile backends: {e}");
                             }
                         }
                         Err(e) => {
-                            tracing::warn!("Service discovery failed: {}", e);
+                            tracing::warn!("Service discovery failed: {e}");
                         }
                     }
                 }
@@ -253,19 +261,35 @@ impl<D: ServiceDiscovery + Clone + 'static, F: BackendFactoryFromDescriptor + Cl
         }
     }
 
+    /// Diff the current backends against discovered descriptors and
+    /// add/remove/replace accordingly.
     async fn reconcile(
-        _lb: &LoadBalancer,
+        lb: &mut LoadBalancer,
         descriptors: Vec<BackendDescriptor>,
         factory: &F,
     ) -> Result<(), Error> {
-        // For a full implementation, LoadBalancer would need methods to:
-        // 1. Get current backend descriptors/IDs
-        // 2. Add/remove/replace backends
-        // 3. Update metrics for existing backends
-        //
-        // For now, this is a placeholder - the real implementation
-        // would require adding methods to LoadBalancer to replace backends.
-        let _ = (descriptors, factory);
+        let current_ids = lb.backend_ids().await;
+
+        // Build a set of discovered IDs for fast lookup
+        let discovered_ids: std::collections::HashSet<&str> =
+            descriptors.iter().map(|d| d.id.as_str()).collect();
+
+        // Remove backends that are no longer in discovery
+        for id in current_ids.iter().flatten() {
+            if !discovered_ids.contains(id.as_str()) {
+                lb.remove_backend_by_id(id).await;
+            }
+        }
+
+        // Add backends that are new
+        for desc in &descriptors {
+            let exists = current_ids.iter().any(|id| id.as_deref() == Some(&desc.id));
+            if !exists {
+                let backend = factory.create(desc).await.map_err(Into::into)?;
+                lb.add_backend_with_id(desc.id.clone(), Box::new(backend)).await;
+            }
+        }
+
         Ok(())
     }
 }
@@ -273,34 +297,62 @@ impl<D: ServiceDiscovery + Clone + 'static, F: BackendFactoryFromDescriptor + Cl
 /// DNS-based service discovery (SRV records).
 #[cfg(feature = "dns")]
 pub mod dns {
-    use super::*;
+    use super::{BackendDescriptor, Error, ServiceDiscovery};
+    use crate::constants::DEFAULT_SRV_PREFIX;
+    use async_trait::async_trait;
+    use std::collections::HashMap;
     use trust_dns_resolver::Resolver;
 
+    /// DNS-based service discovery using SRV records.
     pub struct DnsDiscovery {
         resolver: Resolver,
         service_name: String,
-        port: u16,
+        /// SRV lookup prefix, e.g. "_http._tcp". Defaults to "_http._tcp".
+        srv_prefix: String,
+    }
+
+    impl std::fmt::Debug for DnsDiscovery {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("DnsDiscovery")
+                .field("service_name", &self.service_name)
+                .finish_non_exhaustive()
+        }
     }
 
     impl DnsDiscovery {
-        pub fn new(service_name: String, port: u16) -> Result<Self, Error> {
+        /// Create a new DNS discovery source for the given service name and port.
+        ///
+        /// The `port` parameter is used as a fallback when SRV records do not
+        /// include port information. For standard SRV lookups, ports come from
+        /// the DNS response.
+        pub fn new(service_name: String, _port: u16) -> Result<Self, Error> {
             let resolver = Resolver::new(
                 trust_dns_resolver::config::ResolverConfig::default(),
                 trust_dns_resolver::config::ResolverOpts::default(),
-            )?;
+            )
+            .map_err(|e| Error::Backend(format!("DNS resolver: {e}")))?;
             Ok(Self {
                 resolver,
                 service_name,
-                port,
+                srv_prefix: DEFAULT_SRV_PREFIX.to_string(),
             })
+        }
+
+        /// Set a custom SRV prefix (e.g. "_minecraft._tcp").
+        /// Defaults to "_http._tcp".
+        #[must_use]
+        pub fn with_srv_prefix(mut self, prefix: impl Into<String>) -> Self {
+            self.srv_prefix = prefix.into();
+            self
         }
     }
 
     #[async_trait]
     impl ServiceDiscovery for DnsDiscovery {
         async fn discover(&self) -> Result<Vec<BackendDescriptor>, Error> {
-            let srv_name = format!("_http._tcp.{}", self.service_name);
-            let response = self.resolver.srv_lookup(&srv_name).await?;
+            let srv_name = format!("{}.{}", self.srv_prefix, self.service_name);
+            let response = self.resolver.srv_lookup(&srv_name)
+                .map_err(|e| Error::Backend(format!("DNS lookup failed: {e}")))?;
 
             let mut descriptors = Vec::new();
             for srv in response.iter() {
@@ -309,10 +361,10 @@ pub mod dns {
                 let addr = format!("{}:{}", target.trim_end_matches('.'), port);
 
                 descriptors.push(BackendDescriptor {
-                    id: format!("{}:{}", target, port),
+                    id: format!("{target}:{port}"),
                     addr,
                     metadata: HashMap::new(),
-                    weight: Some(srv.weight()),
+                    weight: Some(srv.weight().into()),
                     health_check: None,
                 });
             }
@@ -324,19 +376,37 @@ pub mod dns {
 /// Consul service discovery.
 #[cfg(feature = "consul")]
 pub mod consul {
-    use super::*;
-    use consulrs::Client;
+    use super::{BackendDescriptor, Error, ServiceDiscovery};
+    use async_trait::async_trait;
     use std::collections::HashMap;
+    use consulrs::client::{ConsulClient, ConsulClientSettingsBuilder};
+    use consulrs::catalog;
 
+    /// Consul service discovery source.
     pub struct ConsulDiscovery {
-        client: Client,
+        client: ConsulClient,
         service_name: String,
         tag_filter: Option<String>,
     }
 
+    impl std::fmt::Debug for ConsulDiscovery {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("ConsulDiscovery")
+                .field("service_name", &self.service_name)
+                .field("tag_filter", &self.tag_filter)
+                .finish_non_exhaustive()
+        }
+    }
+
     impl ConsulDiscovery {
+        /// Create a new Consul discovery source for the given Consul address and service name.
         pub fn new(consul_addr: &str, service_name: String) -> Result<Self, Error> {
-            let client = Client::new(consul_addr)?;
+            let settings = ConsulClientSettingsBuilder::default()
+                .address(consul_addr)
+                .build()
+                .map_err(|e| Error::Backend(format!("consul settings: {e}")))?;
+            let client = ConsulClient::new(settings)
+                .map_err(|e| Error::Backend(format!("consul client: {e}")))?;
             Ok(Self {
                 client,
                 service_name,
@@ -344,6 +414,8 @@ pub mod consul {
             })
         }
 
+        /// Set a tag filter to only discover services with this tag.
+        #[must_use]
         pub fn with_tag(mut self, tag: String) -> Self {
             self.tag_filter = Some(tag);
             self
@@ -353,40 +425,44 @@ pub mod consul {
     #[async_trait]
     impl ServiceDiscovery for ConsulDiscovery {
         async fn discover(&self) -> Result<Vec<BackendDescriptor>, Error> {
-            let mut query = consulrs::query::QueryOptions::default();
-            if let Some(tag) = &self.tag_filter {
-                query.tag = Some(tag.clone());
-            }
-
-            let services = self.client
-                .health()
-                .service(&self.service_name, true, &query, None)
-                .await?;
+            let response = catalog::nodes_with_service(&self.client, &self.service_name, None)
+                .await
+                .map_err(|e| Error::Backend(format!("consul discovery: {e}")))?;
 
             let mut descriptors = Vec::new();
-            for entry in services {
-                let service = &entry.service;
-                let checks = &entry.checks;
+            for entry in response.response {
+                // Apply tag filter if set
+                if let Some(ref filter_tag) = self.tag_filter {
+                    if let Some(ref tags) = entry.service_tags {
+                        if !tags.contains(filter_tag) {
+                            continue;
+                        }
+                    }
+                }
 
-                // Only include if all checks are passing
-                if checks.iter().all(|c| c.status == consulrs::api::CheckStatus::Passing) {
-                    let addr = format!("{}:{}", service.address, service.port);
-                    let mut metadata = HashMap::new();
-                    for (k, v) in &service.meta {
+                let addr = format!(
+                    "{}:{}",
+                    entry.service_address.as_deref().unwrap_or(""),
+                    entry.service_port.unwrap_or(0)
+                );
+                let id = entry.service_id.unwrap_or_default();
+                let mut metadata = HashMap::new();
+                if let Some(meta) = &entry.service_meta {
+                    for (k, v) in meta {
                         metadata.insert(k.clone(), v.clone());
                     }
-                    if let Some(tags) = &service.tags {
-                        metadata.insert("tags".into(), tags.join(","));
-                    }
-
-                    descriptors.push(BackendDescriptor {
-                        id: service.id.clone(),
-                        addr,
-                        metadata,
-                        weight: Some(1),
-                        health_check: Some(format!("{}:{}/health", service.address, service.port)),
-                    });
                 }
+                if let Some(tags) = &entry.service_tags {
+                    metadata.insert("tags".into(), tags.join(","));
+                }
+
+                descriptors.push(BackendDescriptor {
+                    id,
+                    addr,
+                    metadata,
+                    weight: Some(1),
+                    health_check: None,
+                });
             }
             Ok(descriptors)
         }
@@ -396,34 +472,55 @@ pub mod consul {
 /// etcd service discovery.
 #[cfg(feature = "etcd")]
 pub mod etcd {
-    use super::*;
+    use super::{BackendDescriptor, Error, ServiceDiscovery};
+    use async_trait::async_trait;
+    use std::collections::HashMap;
     use etcd_client::Client;
+    use tokio::sync::Mutex;
 
+    /// etcd service discovery source.
     pub struct EtcdDiscovery {
-        client: Client,
+        client: Mutex<Client>,
         prefix: String,
     }
 
+    impl std::fmt::Debug for EtcdDiscovery {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("EtcdDiscovery")
+                .field("prefix", &self.prefix)
+                .finish_non_exhaustive()
+        }
+    }
+
     impl EtcdDiscovery {
+        /// Create a new etcd discovery source for the given endpoints and key prefix.
         pub async fn new(etcd_endpoints: Vec<String>, prefix: String) -> Result<Self, Error> {
-            let client = Client::connect(etcd_endpoints, None).await?;
-            Ok(Self { client, prefix })
+            let client = Client::connect(etcd_endpoints, None).await
+                .map_err(|e| Error::Backend(format!("etcd connect: {e}")))?;
+            Ok(Self { client: Mutex::new(client), prefix })
         }
     }
 
     #[async_trait]
     impl ServiceDiscovery for EtcdDiscovery {
+        #[allow(clippy::significant_drop_tightening)]
         async fn discover(&self) -> Result<Vec<BackendDescriptor>, Error> {
             let mut descriptors = Vec::new();
-            let resp = self.client.get(self.prefix.clone(), Some(etcd_client::GetOptions::new().with_prefix())).await?;
+            let mut client = self.client.lock().await;
+            let resp = client
+                .get(self.prefix.clone(), Some(etcd_client::GetOptions::new().with_prefix()))
+                .await
+                .map_err(|e| Error::Backend(format!("etcd get: {e}")))?;
 
             for kv in resp.kvs() {
-                let key = std::str::from_utf8(kv.key())?;
-                let value = std::str::from_utf8(kv.value())?;
+                let key = String::from_utf8(kv.key().to_vec())
+                    .map_err(|e| Error::Backend(format!("etcd key utf8: {e}")))?;
+                let value = String::from_utf8(kv.value().to_vec())
+                    .map_err(|e| Error::Backend(format!("etcd value utf8: {e}")))?;
 
                 if let Ok(addr) = value.parse::<std::net::SocketAddr>() {
                     descriptors.push(BackendDescriptor {
-                        id: key.to_string(),
+                        id: key,
                         addr: addr.to_string(),
                         metadata: HashMap::new(),
                         weight: Some(1),

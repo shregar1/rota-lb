@@ -1,14 +1,14 @@
 //! The `LoadBalancer` — N backends, distributed by a strategy.
 
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use std::io;
 
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::Mutex;
-use tokio_util::sync::CancellationToken;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, warn};
 
 use crate::backend::{Backend, Connection};
@@ -21,9 +21,10 @@ use crate::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
 /// configured strategy.
 pub struct LoadBalancer {
     backends: Vec<Box<dyn Backend>>,
-    metrics: Arc<Mutex<Vec<TunnelMetrics>>>,
+    ids: Vec<Option<String>>,
+    metrics: Arc<RwLock<Vec<TunnelMetrics>>>,
     strategy: Arc<Mutex<Box<dyn BalanceStrategy>>>,
-    _cancel_token: CancellationToken,
+    generation: Arc<AtomicUsize>,
     dial_timeout: Option<Duration>,
     retry_policy: Option<Arc<dyn RetryPolicy + Send + Sync>>,
 }
@@ -71,11 +72,13 @@ impl LoadBalancer {
                 backends.len()
             )));
         }
+        let n = backends.len();
         Ok(Self {
             backends,
-            metrics: Arc::new(Mutex::new(initial_metrics)),
+            ids: vec![None; n],
+            metrics: Arc::new(RwLock::new(initial_metrics)),
             strategy: Arc::new(Mutex::new(Box::new(strategy))),
-            _cancel_token: CancellationToken::new(),
+            generation: Arc::new(AtomicUsize::new(0)),
             dial_timeout,
             retry_policy,
         })
@@ -98,11 +101,13 @@ impl LoadBalancer {
             backends.push(backend);
             metrics.push(initial_metrics);
         }
+        let n = backends.len();
         Ok(Self {
             backends,
-            metrics: Arc::new(Mutex::new(metrics)),
+            ids: vec![None; n],
+            metrics: Arc::new(RwLock::new(metrics)),
             strategy: Arc::new(Mutex::new(Box::new(strategy))),
-            _cancel_token: CancellationToken::new(),
+            generation: Arc::new(AtomicUsize::new(0)),
             dial_timeout: None,
             retry_policy: None,
         })
@@ -129,13 +134,12 @@ impl LoadBalancer {
     /// the configured strategy. Returns a [`GuardedConnection`] which
     /// implements `AsyncRead + AsyncWrite` and decrements the backend's
     /// `active_connections` count on drop.
+    #[allow(clippy::significant_drop_tightening)]
     pub async fn dial(&self, addr: &str) -> Result<GuardedConnection, Error> {
         validate_dial_addr(addr)?;
 
-        // Pick + increment active count atomically (so strategies that
-        // look at load see a consistent view of the pool).
         let idx = {
-            let mut metrics = self.metrics.lock().await;
+            let mut metrics = self.metrics.write().await;
             let view = PoolView {
                 dial_addr: addr,
                 metrics: &metrics,
@@ -151,104 +155,88 @@ impl LoadBalancer {
                 "selected backend for dial"
             );
             idx
-        };
+        }; // both guards dropped here
 
-        // Try to connect with retry logic
-        let mut attempt = 0u32;
+        let gen = self.generation.load(Ordering::Relaxed);
         let start = std::time::Instant::now();
-        
+
+        match self.dial_with_retry(idx, addr, start).await {
+            Ok(conn) => {
+                self.handle_dial_success(idx).await;
+                debug!(
+                    backend_idx = idx,
+                    elapsed_ms = start.elapsed().as_millis(),
+                    "dial succeeded"
+                );
+                let guard = ActiveConnectionGuard {
+                    metrics: self.metrics.clone(),
+                    generation: self.generation.clone(),
+                    index: idx,
+                    gen_at_creation: gen,
+                };
+                Ok(GuardedConnection {
+                    inner: conn,
+                    _guard: guard,
+                })
+            }
+            Err(e) => Err(self.handle_dial_error(idx, e).await),
+        }
+    }
+
+    async fn handle_dial_success(&self, idx: usize) {
+        let mut metrics = self.metrics.write().await;
+        if let Some(m) = metrics.get_mut(idx) {
+            m.recent_errors = 0;
+        }
+        drop(metrics);
+        self.strategy.lock().await.report_success(idx);
+    }
+
+    async fn handle_dial_error(&self, idx: usize, err: Error) -> Error {
+        let mut metrics = self.metrics.write().await;
+        if let Some(m) = metrics.get_mut(idx) {
+            m.active_connections = m.active_connections.saturating_sub(1);
+            m.total_errors = m.total_errors.saturating_add(1);
+            m.recent_errors = m.recent_errors.saturating_add(1);
+        }
+        drop(metrics);
+        self.strategy.lock().await.report_error(idx);
+        err
+    }
+
+    async fn dial_with_retry(
+        &self,
+        idx: usize,
+        addr: &str,
+        start: std::time::Instant,
+    ) -> Result<Connection, Error> {
+        let mut attempt = 0u32;
         loop {
-            // Open the connection with optional timeout
+            attempt += 1;
             let dial_fut = self.backends[idx].dial(addr);
             let conn_result = if let Some(timeout) = self.dial_timeout {
-                match tokio::time::timeout(timeout, dial_fut).await {
-                    Ok(result) => result,
-                    Err(_) => Err(Error::Backend("dial timeout".into())),
-                }
+                tokio::time::timeout(timeout, dial_fut)
+                    .await
+                    .unwrap_or_else(|_| Err(Error::Backend("dial timeout".into())))
             } else {
                 dial_fut.await
             };
 
             match conn_result {
-                Ok(conn) => {
-                    debug!(
-                        backend_idx = idx,
-                        attempt = attempt + 1,
-                        elapsed_ms = start.elapsed().as_millis(),
-                        "dial succeeded"
-                    );
-                    let guard = ActiveConnectionGuard {
-                        metrics: self.metrics.clone(),
-                        index: idx,
-                    };
-
-                    return Ok(GuardedConnection {
-                        inner: conn,
-                        _guard: guard,
-                    });
-                }
+                Ok(conn) => return Ok(conn),
                 Err(e) => {
-                    attempt += 1;
-                    warn!(
-                        backend_idx = idx,
-                        attempt,
-                        error = %e,
-                        "dial failed"
-                    );
-
-                    // Check retry policy
-                    let should_retry = if let Some(policy) = &self.retry_policy {
-                        // Check total timeout budget
-                        if let Some(total_timeout) = policy.total_timeout() {
-                            if start.elapsed() >= total_timeout {
-                                false
-                            } else {
-                                policy.should_retry(attempt, &e).is_some()
-                            }
-                        } else {
-                            policy.should_retry(attempt, &e).is_some()
-                        }
-                    } else {
-                        false
-                    };
-
-                    if !should_retry {
-                        // No more retries - roll back and return error
-                        let mut metrics = self.metrics.lock().await;
-                        metrics[idx].active_connections =
-                            metrics[idx].active_connections.saturating_sub(1);
-                        metrics[idx].total_errors += 1;
-                        metrics[idx].recent_errors += 1;
-                        drop(metrics);
-                        let mut strategy = self.strategy.lock().await;
-                        strategy.report_error(idx);
+                    warn!(backend_idx = idx, attempt, error = %e, "dial failed");
+                    let delay = self.retry_policy.as_ref().and_then(|policy| {
+                        let within_budget = policy
+                            .total_timeout()
+                            .map_or(true, |t| start.elapsed() < t);
+                        within_budget.then(|| policy.should_retry(attempt, &e)).flatten()
+                    });
+                    let Some(delay) = delay else {
                         return Err(e);
-                    }
-
-                    // Wait for the retry delay
-                    if let Some(policy) = &self.retry_policy {
-                        if let Some(delay) = policy.should_retry(attempt, &e) {
-                            debug!(
-                                backend_idx = idx,
-                                attempt,
-                                delay_ms = delay.as_millis(),
-                                "retrying dial after delay"
-                            );
-                            tokio::time::sleep(delay).await;
-                            continue;
-                        }
-                    }
-
-                    // No delay returned from policy - give up
-                    let mut metrics = self.metrics.lock().await;
-                    metrics[idx].active_connections =
-                        metrics[idx].active_connections.saturating_sub(1);
-                    metrics[idx].total_errors += 1;
-                    metrics[idx].recent_errors += 1;
-                    drop(metrics);
-                    let mut strategy = self.strategy.lock().await;
-                    strategy.report_error(idx);
-                    return Err(e);
+                    };
+                    debug!(attempt, delay_ms = delay.as_millis(), "retrying dial");
+                    tokio::time::sleep(delay).await;
                 }
             }
         }
@@ -257,7 +245,7 @@ impl LoadBalancer {
     /// Read-only access to the live per-backend metrics. Useful for logging
     /// or external monitoring.
     pub async fn metrics(&self) -> Vec<TunnelMetrics> {
-        self.metrics.lock().await.clone()
+        self.metrics.read().await.clone()
     }
 
     /// Number of active backends in the pool.
@@ -267,7 +255,6 @@ impl LoadBalancer {
 
     /// Tear every active backend down and release resources.
     pub async fn shutdown(self) {
-        self._cancel_token.cancel();
         for mut backend in self.backends {
             backend.shutdown().await;
         }
@@ -282,24 +269,44 @@ impl LoadBalancer {
     /// The new backend will be included in the load balancing pool immediately.
     /// Returns the index of the added backend.
     pub async fn add_backend(&mut self, backend: Box<dyn Backend>) -> usize {
-        let mut metrics = self.metrics.lock().await;
+        let mut metrics = self.metrics.write().await;
         let idx = self.backends.len();
         self.backends.push(backend);
+        self.ids.push(None);
+        metrics.push(TunnelMetrics::default());
+        idx
+    }
+
+    /// Add a backend with an ID for service discovery tracking.
+    pub async fn add_backend_with_id(
+        &mut self,
+        id: String,
+        backend: Box<dyn Backend>,
+    ) -> usize {
+        let mut metrics = self.metrics.write().await;
+        let idx = self.backends.len();
+        self.backends.push(backend);
+        self.ids.push(Some(id));
         metrics.push(TunnelMetrics::default());
         idx
     }
 
     /// Remove a backend from the pool by index.
     ///
-    /// The backend will be shut down and removed from the pool. Active connections
-    /// on that backend will continue until they complete. Returns `true` if the
-    /// backend was removed, `false` if the index was out of bounds.
+    /// The backend will be shut down and removed from the pool. Existing
+    /// [`GuardedConnection`] instances on that backend will continue until
+    /// dropped — their drop guard will detect the generation change and
+    /// skip the metrics decrement.
+    ///
+    /// Returns `true` if the backend was removed, `false` if out of bounds.
     pub async fn remove_backend(&mut self, index: usize) -> bool {
         if index >= self.backends.len() {
             return false;
         }
+        self.generation.fetch_add(1, Ordering::SeqCst);
         let mut backend = self.backends.remove(index);
-        self.metrics.lock().await.remove(index);
+        self.ids.remove(index);
+        self.metrics.write().await.remove(index);
         backend.shutdown().await;
         true
     }
@@ -312,6 +319,22 @@ impl LoadBalancer {
         } else {
             false
         }
+    }
+
+    /// Remove a backend by its service-discovery ID. Returns `true` if found
+    /// and removed.
+    pub async fn remove_backend_by_id(&mut self, id: &str) -> bool {
+        if let Some(idx) = self.ids.iter().position(|i| i.as_deref() == Some(id)) {
+            self.remove_backend(idx).await
+        } else {
+            false
+        }
+    }
+
+    /// Return the list of tracked backend IDs.
+    #[allow(clippy::unused_async)]
+    pub async fn backend_ids(&self) -> Vec<Option<String>> {
+        self.ids.clone()
     }
 
     /// Replace all backends atomically.
@@ -327,12 +350,13 @@ impl LoadBalancer {
         if new_backends.is_empty() {
             return Err(Error::NoBackends);
         }
-        // Shutdown old backends
+        self.generation.fetch_add(1, Ordering::SeqCst);
         for mut backend in self.backends.drain(..) {
             backend.shutdown().await;
         }
-        // Reset metrics
-        *self.metrics.lock().await = vec![TunnelMetrics::default(); new_backends.len()];
+        self.ids.clear();
+        self.ids.resize(new_backends.len(), None);
+        *self.metrics.write().await = vec![TunnelMetrics::default(); new_backends.len()];
         self.backends = new_backends;
         if let Some(s) = strategy {
             *self.strategy.lock().await = s;
@@ -342,12 +366,12 @@ impl LoadBalancer {
 
     /// Drain a backend gracefully - stop sending new connections but wait for
     /// existing connections to complete.
+    #[allow(clippy::significant_drop_tightening)]
     pub async fn drain_backend(&mut self, index: usize) -> bool {
         if index >= self.backends.len() {
             return false;
         }
-        // Mark as draining by setting a very high error count so strategies avoid it
-        let mut metrics = self.metrics.lock().await;
+        let mut metrics = self.metrics.write().await;
         if let Some(m) = metrics.get_mut(index) {
             m.recent_errors = u32::MAX;
         }
@@ -356,13 +380,14 @@ impl LoadBalancer {
 
     /// Check if a backend is draining.
     pub async fn is_draining(&self, index: usize) -> bool {
-        let metrics = self.metrics.lock().await;
-        metrics.get(index).map(|m| m.recent_errors == u32::MAX).unwrap_or(false)
+        let metrics = self.metrics.read().await;
+        metrics.get(index).is_some_and(|m| m.recent_errors == u32::MAX)
     }
 
     /// Undrain a backend - allow it to receive new connections again.
+    #[allow(clippy::significant_drop_tightening)]
     pub async fn undrain_backend(&mut self, index: usize) -> bool {
-        let mut metrics = self.metrics.lock().await;
+        let mut metrics = self.metrics.write().await;
         if let Some(m) = metrics.get_mut(index) {
             if m.recent_errors == u32::MAX {
                 m.recent_errors = 0;
@@ -372,11 +397,10 @@ impl LoadBalancer {
         false
     }
 
-    /// Replace the strategy at runtime.
-    pub fn set_strategy(&mut self, strategy: impl BalanceStrategy + 'static) {
-        if let Ok(mut guard) = self.strategy.try_lock() {
-            *guard = Box::new(strategy);
-        }
+    /// Replace the strategy at runtime. This is not a hot path (admin ops),
+    /// so we use a blocking lock rather than silently dropping the request.
+    pub async fn set_strategy(&mut self, strategy: impl BalanceStrategy + 'static) {
+        *self.strategy.lock().await = Box::new(strategy);
     }
 
     /// Get the current strategy name.
@@ -399,6 +423,7 @@ impl LoadBalancer {
 ///     .build().await?;
 /// # Ok(()) }
 /// ```
+#[derive(Default)]
 pub struct LoadBalancerBuilder {
     backends: Option<Vec<Box<dyn Backend>>>,
     factories: Option<Vec<Box<dyn BackendFactory>>>,
@@ -408,24 +433,11 @@ pub struct LoadBalancerBuilder {
     retry_policy: Option<Arc<dyn RetryPolicy + Send + Sync>>,
 }
 
-impl Default for LoadBalancerBuilder {
-    fn default() -> Self {
-        Self {
-            backends: None,
-            factories: None,
-            initial_metrics: None,
-            strategy: None,
-            dial_timeout: None,
-            retry_policy: None,
-        }
-    }
-}
-
 impl std::fmt::Debug for LoadBalancerBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LoadBalancerBuilder")
-            .field("backends_count", &self.backends.as_ref().map(|b| b.len()))
-            .field("factories_count", &self.factories.as_ref().map(|b| b.len()))
+            .field("backends_count", &self.backends.as_ref().map(Vec::len))
+            .field("factories_count", &self.factories.as_ref().map(Vec::len))
             .field("has_initial_metrics", &self.initial_metrics.is_some())
             .field("has_strategy", &self.strategy.is_some())
             .finish_non_exhaustive()
@@ -434,37 +446,43 @@ impl std::fmt::Debug for LoadBalancerBuilder {
 
 impl LoadBalancerBuilder {
     /// Set the pre-constructed backends. Mutually exclusive with [`factories`](Self::factories).
+    #[must_use]
     pub fn backends(mut self, backends: Vec<Box<dyn Backend>>) -> Self {
         self.backends = Some(backends);
         self
     }
 
     /// Set backend factories for lazy construction. Mutually exclusive with [`backends`](Self::backends).
+    #[must_use]
     pub fn factories(mut self, factories: Vec<Box<dyn BackendFactory>>) -> Self {
         self.factories = Some(factories);
         self
     }
 
     /// Seed initial metrics for each backend. Must match the number of backends/factories.
+    #[must_use]
     pub fn initial_metrics(mut self, metrics: Vec<TunnelMetrics>) -> Self {
         self.initial_metrics = Some(metrics);
         self
     }
 
     /// Set the load balancing strategy.
+    #[must_use]
     pub fn strategy(mut self, strategy: impl BalanceStrategy + 'static) -> Self {
         self.strategy = Some(Box::new(strategy));
         self
     }
 
     /// Set a timeout for each dial attempt. If not set, no timeout is applied.
-    pub fn dial_timeout(mut self, timeout: Duration) -> Self {
+    #[must_use]
+    pub const fn dial_timeout(mut self, timeout: Duration) -> Self {
         self.dial_timeout = Some(timeout);
         self
     }
 
     /// Set a retry policy for failed dial attempts.
-    pub fn retry_policy(mut self, policy: impl RetryPolicy + Send + Sync + 'static) -> Self {
+    #[must_use]
+    pub fn retry_policy(mut self, policy: impl RetryPolicy + 'static) -> Self {
         self.retry_policy = Some(Arc::new(policy));
         self
     }
@@ -477,25 +495,18 @@ impl LoadBalancerBuilder {
 
         match (self.backends, self.factories) {
             (Some(backends), None) => {
-                let metrics = self.initial_metrics.unwrap_or_default();
-                if !metrics.is_empty() && metrics.len() != backends.len() {
-                    return Err(Error::Factory(format!(
+                let metrics = match self.initial_metrics {
+                    Some(m) if m.len() == backends.len() => m,
+                    Some(m) => return Err(Error::Factory(format!(
                         "initial_metrics.len() ({}) must equal backends.len() ({})",
-                        metrics.len(),
+                        m.len(),
                         backends.len()
-                    )));
-                }
+                    ))),
+                    None => vec![TunnelMetrics::default(); backends.len()],
+                };
                 LoadBalancer::new_with_metrics(backends, metrics, strategy, dial_timeout, retry_policy)
             }
             (None, Some(factories)) => {
-                let metrics = self.initial_metrics.unwrap_or_default();
-                if !metrics.is_empty() && metrics.len() != factories.len() {
-                    return Err(Error::Factory(format!(
-                        "initial_metrics.len() ({}) must equal factories.len() ({})",
-                        metrics.len(),
-                        factories.len()
-                    )));
-                }
                 // For factories, we need to create them first then build
                 if factories.is_empty() {
                     return Err(Error::NoBackends);
@@ -507,8 +518,15 @@ impl LoadBalancerBuilder {
                     created_backends.push(backend);
                     created_metrics.push(initial_metrics);
                 }
-                // Use caller-provided metrics if any, otherwise use factory-provided
-                let final_metrics = if !metrics.is_empty() { metrics } else { created_metrics };
+                let final_metrics = match self.initial_metrics {
+                    Some(m) if m.len() == factories.len() => m,
+                    Some(m) => return Err(Error::Factory(format!(
+                        "initial_metrics.len() ({}) must equal factories.len() ({})",
+                        m.len(),
+                        factories.len()
+                    ))),
+                    None => created_metrics,
+                };
                 LoadBalancer::new_with_metrics(created_backends, final_metrics, strategy, dial_timeout, retry_policy)
             }
             (Some(_), Some(_)) => Err(Error::Factory("cannot set both backends and factories".into())),
@@ -521,10 +539,12 @@ impl LoadBalancerBuilder {
 //  Connection wrapper
 // ============================================================================
 
-/// A connection returned by [`LoadBalancer::dial`]. Wraps the inner connection
-/// returned by `Backend::dial` plus a drop guard that decrements the
-/// backend's `active_connections` count. Implements `AsyncRead + AsyncWrite`
-/// so it's a drop-in replacement for the inner connection.
+/// A connection returned by [`LoadBalancer::dial`].
+///
+/// Wraps the inner connection returned by `Backend::dial` plus a drop guard
+/// that decrements the backend's `active_connections` count. Implements
+/// `AsyncRead + AsyncWrite` so it's a drop-in replacement for the inner
+/// connection.
 pub struct GuardedConnection {
     inner: Connection,
     _guard: ActiveConnectionGuard,
@@ -545,17 +565,24 @@ impl std::fmt::Debug for GuardedConnection {
 }
 
 struct ActiveConnectionGuard {
-    metrics: Arc<Mutex<Vec<TunnelMetrics>>>,
+    metrics: Arc<RwLock<Vec<TunnelMetrics>>>,
+    generation: Arc<AtomicUsize>,
     index: usize,
+    gen_at_creation: usize,
 }
 
 impl Drop for ActiveConnectionGuard {
     fn drop(&mut self) {
-        // `try_lock`: if the load balancer is mid-dial and holding the
-        // metrics lock, we don't want to block forever. The active count
-        // will be slightly inflated until the next operation — best-effort
-        // accounting is fine for strategy input.
-        if let Ok(mut metrics) = self.metrics.try_lock() {
+        // If the generation changed since creation, the metrics vector may
+        // have been resized (via remove_backend / replace_backends), making
+        // self.index potentially out-of-bounds or pointing to a different
+        // backend. For safety we skip the decrement in that case — the
+        // active count may be slightly inflated but converges on the next
+        // operation.
+        if self.generation.load(Ordering::SeqCst) != self.gen_at_creation {
+            return;
+        }
+        if let Ok(mut metrics) = self.metrics.try_write() {
             if let Some(m) = metrics.get_mut(self.index) {
                 m.active_connections = m.active_connections.saturating_sub(1);
             }
@@ -615,7 +642,7 @@ fn validate_dial_addr(addr: &str) -> Result<(), Error> {
             reason: "empty host",
         });
     }
-    if port.parse::<u16>().map(|p| p == 0).unwrap_or(true) {
+    if port.parse::<u16>().map_or(true, |p| p == 0) {
         return Err(Error::InvalidAddress {
             addr: addr.to_owned(),
             reason: "port must be 1-65535",

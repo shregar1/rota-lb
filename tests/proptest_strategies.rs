@@ -17,6 +17,7 @@ fn make_pool_view(n: usize) -> PoolView<'static> {
     }
 }
 
+#[allow(dead_code)]
 fn make_pool_view_with_metrics(n: usize, rtts: &[Option<u64>], active: &[u32]) -> PoolView<'static> {
     let metrics = rtts.iter().zip(active.iter().chain(std::iter::repeat(&0))).map(|(rtt, &active)| TunnelMetrics {
         rtt: rtt.map(Duration::from_millis),
@@ -145,8 +146,8 @@ proptest! {
     fn least_connections_picks_min_active(n in 2usize..10) {
         let mut s = LeastConnections::new();
         let mut metrics = vec![TunnelMetrics::default(); n];
-        for i in 0..n {
-            metrics[i].active_connections = i as u32;
+        for (i, m) in metrics.iter_mut().enumerate() {
+            m.active_connections = i as u32;
         }
         let view = PoolView {
             dial_addr: "example.com:443",

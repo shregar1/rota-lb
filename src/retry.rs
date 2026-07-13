@@ -1,6 +1,9 @@
 //! Retry policy for dial operations.
 
+use std::sync::Arc;
 use std::time::Duration;
+
+use crate::constants::{DEFAULT_MAX_RETRY_DELAY, DEFAULT_RETRY_MULTIPLIER, JITTER_FACTOR};
 use crate::error::Error;
 
 /// A policy for retrying failed dial attempts.
@@ -48,12 +51,13 @@ pub struct FixedRetry {
 
 impl FixedRetry {
     /// Create a new fixed retry policy.
-    pub fn new(delay: Duration) -> Self {
+    pub const fn new(delay: Duration) -> Self {
         Self { delay, max_attempts: None }
     }
 
     /// Set the maximum number of attempts.
-    pub fn with_max_attempts(mut self, max: u32) -> Self {
+    #[must_use]
+    pub const fn with_max_attempts(mut self, max: u32) -> Self {
         self.max_attempts = Some(max);
         self
     }
@@ -67,6 +71,10 @@ impl RetryPolicy for FixedRetry {
             }
         }
         Some(self.delay)
+    }
+
+    fn max_attempts(&self) -> Option<u32> {
+        self.max_attempts
     }
 }
 
@@ -82,36 +90,40 @@ pub struct ExponentialBackoff {
 
 impl ExponentialBackoff {
     /// Create a new exponential backoff retry policy.
-    pub fn new(base_delay: Duration) -> Self {
+    pub const fn new(base_delay: Duration) -> Self {
         Self {
             base_delay,
-            max_delay: Duration::from_secs(30),
-            multiplier: 2.0,
+            max_delay: DEFAULT_MAX_RETRY_DELAY,
+            multiplier: DEFAULT_RETRY_MULTIPLIER,
             max_attempts: None,
             jitter: true,
         }
     }
 
     /// Set the maximum delay between retries.
-    pub fn with_max_delay(mut self, max_delay: Duration) -> Self {
+    #[must_use]
+    pub const fn with_max_delay(mut self, max_delay: Duration) -> Self {
         self.max_delay = max_delay;
         self
     }
 
     /// Set the multiplier for exponential growth.
-    pub fn with_multiplier(mut self, multiplier: f64) -> Self {
+    #[must_use]
+    pub const fn with_multiplier(mut self, multiplier: f64) -> Self {
         self.multiplier = multiplier;
         self
     }
 
     /// Set the maximum number of attempts.
-    pub fn with_max_attempts(mut self, max: u32) -> Self {
+    #[must_use]
+    pub const fn with_max_attempts(mut self, max: u32) -> Self {
         self.max_attempts = Some(max);
         self
     }
 
     /// Enable or disable jitter (default: true).
-    pub fn with_jitter(mut self, jitter: bool) -> Self {
+    #[must_use]
+    pub const fn with_jitter(mut self, jitter: bool) -> Self {
         self.jitter = jitter;
         self
     }
@@ -125,16 +137,23 @@ impl RetryPolicy for ExponentialBackoff {
             }
         }
 
-        let delay = self.base_delay.as_secs_f64() * self.multiplier.powi(attempt as i32);
-        let delay = Duration::from_secs_f64(delay.min(self.max_delay.as_secs_f64()));
+        let raw_delay = self.base_delay.as_secs_f64() * self.multiplier.powi(i32::try_from(attempt).unwrap_or(0));
+        if raw_delay.is_infinite() || raw_delay.is_nan() {
+            return Some(self.max_delay);
+        }
+        let delay_secs = raw_delay.min(self.max_delay.as_secs_f64());
+        let delay = Duration::from_secs_f64(delay_secs);
 
         if self.jitter {
-            // Add jitter: random value between 0 and delay
             let jitter = rand::random::<f64>();
-            Some(Duration::from_secs_f64(delay.as_secs_f64() * (0.5 + jitter * 0.5)))
+            Some(Duration::from_secs_f64(jitter.mul_add(JITTER_FACTOR, JITTER_FACTOR) * delay_secs))
         } else {
             Some(delay)
         }
+    }
+
+    fn max_attempts(&self) -> Option<u32> {
+        self.max_attempts
     }
 }
 
@@ -187,9 +206,10 @@ pub fn is_transient_error(error: &Error) -> bool {
     }
 }
 
-/// A builder for configuring retry policies on the LoadBalancer.
+/// A builder for configuring retry policies on the `LoadBalancer`.
+#[derive(Clone, Default)]
 pub struct RetryPolicyBuilder {
-    policy: Option<Box<dyn RetryPolicy>>,
+    policy: Option<Arc<dyn RetryPolicy>>,
 }
 
 impl std::fmt::Debug for RetryPolicyBuilder {
@@ -198,39 +218,37 @@ impl std::fmt::Debug for RetryPolicyBuilder {
     }
 }
 
-impl Default for RetryPolicyBuilder {
-    fn default() -> Self {
-        Self { policy: None }
-    }
-}
-
 impl RetryPolicyBuilder {
     /// Disable retries (fail fast).
+    #[must_use]
     pub fn no_retry(mut self) -> Self {
-        self.policy = Some(Box::new(NoRetry));
+        self.policy = Some(Arc::new(NoRetry));
         self
     }
 
     /// Use fixed delay between retries.
+    #[must_use]
     pub fn fixed_retry(mut self, delay: Duration) -> Self {
-        self.policy = Some(Box::new(FixedRetry::new(delay)));
+        self.policy = Some(Arc::new(FixedRetry::new(delay)));
         self
     }
 
     /// Use exponential backoff with jitter.
+    #[must_use]
     pub fn exponential_backoff(mut self, base_delay: Duration) -> Self {
-        self.policy = Some(Box::new(ExponentialBackoff::new(base_delay)));
+        self.policy = Some(Arc::new(ExponentialBackoff::new(base_delay)));
         self
     }
 
     /// Set a custom retry policy.
+    #[must_use]
     pub fn custom(mut self, policy: impl RetryPolicy + 'static) -> Self {
-        self.policy = Some(Box::new(policy));
+        self.policy = Some(Arc::new(policy));
         self
     }
 
     /// Build the retry policy.
-    pub fn build(self) -> Option<Box<dyn RetryPolicy>> {
+    pub fn build(self) -> Option<Arc<dyn RetryPolicy>> {
         self.policy
     }
 }

@@ -1,6 +1,6 @@
 //! The `BackendFactory` trait.
 //!
-//! Some backends can't be constructed up-front: a WireGuard tunnel needs a
+//! Some backends can't be constructed up-front: a `WireGuard` tunnel needs a
 //! registration handshake; an SSH tunnel needs authentication; an HTTP
 //! CONNECT proxy needs a handshake. `BackendFactory` lets the load balancer
 //! bring backends up lazily, one per call to `create`.
@@ -16,8 +16,10 @@ use crate::error::Error;
 use crate::strategy::TunnelMetrics;
 
 /// What a `BackendFactory::create` call returns: the live backend plus the
-/// metrics the load balancer should seed it with (typically an
-/// already-measured RTT, since most factories probe before constructing).
+/// metrics the load balancer should seed it with.
+///
+/// Typically an already-measured RTT, since most factories probe before
+/// constructing.
 pub struct BackendOutput {
     /// The constructed backend, ready to accept `dial` calls.
     pub backend: Box<dyn Backend>,
