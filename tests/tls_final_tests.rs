@@ -1,5 +1,7 @@
 //! Final TLS tests to push coverage.
 
+#![cfg(feature = "tls")]
+
 use std::time::Duration;
 use rota::tls::TlsConfig;
 

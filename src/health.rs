@@ -128,6 +128,15 @@ impl HealthChecker {
     }
 
     /// Shut down the health checker.
+    ///
+    /// If `shutdown` is not called explicitly, dropping the
+    /// `HealthChecker` will:
+    /// - drop the mpsc sender, causing the run loop's `shutdown_rx.recv()`
+    ///   to return `None` and break the loop, and
+    /// - drop the `JoinHandle`, cancelling the spawned task if still running.
+    ///
+    /// Explicit `shutdown` is preferred when you want to await clean
+    /// termination (e.g. flushing logs).
     pub async fn shutdown(self) {
         let _ = self.shutdown_tx.send(()).await;
         let _ = tokio::time::timeout(Duration::from_secs(5), self.task_handle).await;

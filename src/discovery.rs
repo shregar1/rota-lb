@@ -440,11 +440,27 @@ pub mod consul {
                     }
                 }
 
-                let addr = format!(
-                    "{}:{}",
-                    entry.service_address.as_deref().unwrap_or(""),
-                    entry.service_port.unwrap_or(0)
-                );
+                // Skip entries with missing or empty address / port. The
+                // load balancer's `validate_dial_addr` would reject the
+                // resulting ":0" / "" at dial time, which is much harder
+                // to debug than skipping here.
+                let (Some(address), Some(port)) =
+                    (entry.service_address.as_deref(), entry.service_port)
+                else {
+                    tracing::warn!(
+                        service_id = entry.service_id.as_deref().unwrap_or("?"),
+                        "skipping consul entry with missing address or port"
+                    );
+                    continue;
+                };
+                if address.is_empty() || port == 0 {
+                    tracing::warn!(
+                        service_id = entry.service_id.as_deref().unwrap_or("?"),
+                        "skipping consul entry with empty address or zero port"
+                    );
+                    continue;
+                }
+                let addr = format!("{}:{}", address, port);
                 let id = entry.service_id.unwrap_or_default();
                 let mut metadata = HashMap::new();
                 if let Some(meta) = &entry.service_meta {

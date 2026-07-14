@@ -198,10 +198,22 @@ impl RetryPolicy for RetryOnError {
 }
 
 /// Default retry predicate: retry on I/O errors and timeout errors.
+///
+/// All [`Error::Io`] variants are treated as transient (a connection that
+/// failed mid-handshake is usually worth retrying against the next backend).
+/// [`Error::Backend`] strings are matched case-insensitively for the common
+/// timeout spellings emitted by real backend implementations
+/// ("timeout", "timed out", "timedout", "time out", `ConnectTimeout`, etc.).
 pub fn is_transient_error(error: &Error) -> bool {
     match error {
         Error::Io(_) => true,
-        Error::Backend(msg) => msg.contains("timeout"),
+        Error::Backend(msg) => {
+            let lower = msg.to_lowercase();
+            lower.contains("timeout")
+                || lower.contains("timed out")
+                || lower.contains("timedout")
+                || lower.contains("time out")
+        }
         _ => false,
     }
 }

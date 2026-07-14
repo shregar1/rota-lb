@@ -82,13 +82,15 @@ mod tower_impl {
             }
         }
 
-        fn call(&mut self, req: LbRequest) -> Self::Future {
-            let addr = req.addr;
-            let lb = self.clone();
-            Box::pin(async move {
-                lb.dial(&addr).await
-            })
-        }
+    fn call(&mut self, req: LbRequest) -> Self::Future {
+        let addr = req.addr;
+        let dial_timeout = req.dial_timeout;
+        let retry_policy = req.retry_policy;
+        let lb = self.clone();
+        Box::pin(async move {
+            lb.dial_with_options(&addr, dial_timeout, retry_policy).await
+        })
+    }
     }
 }
 

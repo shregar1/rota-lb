@@ -134,9 +134,28 @@ impl LoadBalancer {
     /// the configured strategy. Returns a [`GuardedConnection`] which
     /// implements `AsyncRead + AsyncWrite` and decrements the backend's
     /// `active_connections` count on drop.
-    #[allow(clippy::significant_drop_tightening)]
     pub async fn dial(&self, addr: &str) -> Result<GuardedConnection, Error> {
+        self.dial_with_options(addr, None, None).await
+    }
+
+    /// Like [`dial`](Self::dial) but lets the caller override the
+    /// `dial_timeout` and `retry_policy` for this single call. `None`
+    /// means "use the balancer's configured default".
+    #[allow(clippy::significant_drop_tightening)]
+    pub async fn dial_with_options(
+        &self,
+        addr: &str,
+        dial_timeout: Option<Duration>,
+        retry_policy: Option<Arc<dyn RetryPolicy + Send + Sync>>,
+    ) -> Result<GuardedConnection, Error> {
         validate_dial_addr(addr)?;
+
+        // The pool can become empty after `remove_backend`. Refuse
+        // rather than calling into a strategy that may panic on
+        // `0 % len`, `gen_range(0..0)`, etc.
+        if self.backends.is_empty() {
+            return Err(Error::NoBackends);
+        }
 
         let idx = {
             let mut metrics = self.metrics.write().await;
@@ -160,7 +179,10 @@ impl LoadBalancer {
         let gen = self.generation.load(Ordering::Relaxed);
         let start = std::time::Instant::now();
 
-        match self.dial_with_retry(idx, addr, start).await {
+        match self
+            .dial_with_retry(idx, addr, start, dial_timeout, retry_policy)
+            .await
+        {
             Ok(conn) => {
                 self.handle_dial_success(idx).await;
                 debug!(
@@ -209,12 +231,16 @@ impl LoadBalancer {
         idx: usize,
         addr: &str,
         start: std::time::Instant,
+        dial_timeout: Option<Duration>,
+        retry_policy: Option<Arc<dyn RetryPolicy + Send + Sync>>,
     ) -> Result<Connection, Error> {
         let mut attempt = 0u32;
+        let effective_timeout = dial_timeout.or(self.dial_timeout);
+        let effective_policy = retry_policy.or_else(|| self.retry_policy.clone());
         loop {
             attempt += 1;
             let dial_fut = self.backends[idx].dial(addr);
-            let conn_result = if let Some(timeout) = self.dial_timeout {
+            let conn_result = if let Some(timeout) = effective_timeout {
                 tokio::time::timeout(timeout, dial_fut)
                     .await
                     .unwrap_or_else(|_| Err(Error::Backend("dial timeout".into())))
@@ -226,7 +252,7 @@ impl LoadBalancer {
                 Ok(conn) => return Ok(conn),
                 Err(e) => {
                     warn!(backend_idx = idx, attempt, error = %e, "dial failed");
-                    let delay = self.retry_policy.as_ref().and_then(|policy| {
+                    let delay = effective_policy.as_ref().and_then(|policy| {
                         let within_budget = policy
                             .total_timeout()
                             .map_or(true, |t| start.elapsed() < t);
@@ -340,8 +366,11 @@ impl LoadBalancer {
     /// Replace all backends atomically.
     ///
     /// The new backends replace the old pool entirely. Old backends are shut down.
-    /// The strategy is reset to its initial state. Returns an error if the new
-    /// pool is empty.
+    /// If `strategy` is `Some`, the strategy instance is replaced wholesale
+    /// (the old strategy's state — e.g. `Failover`'s primary pin, `Sticky`'s
+    /// pinned index, `WeightedRoundRobin`'s RTT cache — is discarded).
+    /// If `strategy` is `None`, the existing strategy instance is preserved
+    /// along with its state. Returns an error if the new pool is empty.
     pub async fn replace_backends(
         &mut self,
         new_backends: Vec<Box<dyn Backend>>,

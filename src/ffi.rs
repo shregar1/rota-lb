@@ -69,7 +69,16 @@ impl FfiStrategy {
         }
     }
 
-    fn build(self) -> Box<dyn BalanceStrategy + Send> {
+    fn build(self, backend_count: usize) -> Box<dyn BalanceStrategy + Send> {
+        // The cast below depends on the highest discriminant matching the
+        // length of `STRATEGY_NAMES`. If a new variant is added without
+        // updating `STRATEGY_NAMES` (or vice versa), the FFI name cache
+        // and `name()` indexing would silently mismatch or panic. Catch
+        // that at compile time.
+        const _: () = assert!(
+            STRATEGY_NAMES.len() == (FfiStrategy::Sticky as usize + 1),
+            "STRATEGY_NAMES length must match FfiStrategy variant count"
+        );
         match self {
             Self::RoundRobin => Box::new(RoundRobin::new()),
             Self::Random => Box::new(Random::new()),
@@ -77,7 +86,7 @@ impl FfiStrategy {
             Self::LeastConnections => Box::new(LeastConnections::new()),
             Self::HashByAddr => Box::new(HashByAddr::new()),
             Self::WeightedRoundRobin => Box::new(WeightedRoundRobin::new()),
-            Self::Failover => Box::new(Failover::new()),
+            Self::Failover => Box::new(Failover::with_backend_count(backend_count)),
             Self::HealthWeighted => Box::new(HealthWeighted::new()),
             Self::Sticky => Box::new(Sticky::new()),
         }
@@ -228,7 +237,7 @@ pub unsafe extern "C" fn rota_lb_create(
                 tracing::warn!(strategy_kind, "rota_lb_create: unknown strategy");
                 return std::ptr::null_mut();
             };
-            let strategy = kind.build();
+let strategy = kind.build(n as usize);
             Box::into_raw(Box::new(FfiLoadBalancer {
                 strategy: Mutex::new(strategy),
                 backend_count: n as usize,
@@ -508,7 +517,7 @@ pub unsafe extern "C" fn rota_lb_set_strategy(
                 },
                 |mut s| {
                     let from = format!("{:?}", lb.strategy_kind);
-                    *s = kind.build();
+                    *s = kind.build(lb.backend_count);
                     lb.strategy_kind = kind;
                     tracing::info!("rota strategy swapped: {from} -> {kind:?}");
                     0
@@ -547,7 +556,7 @@ pub unsafe extern "C" fn rota_lb_reset(lb: *mut FfiLoadBalancer) -> i32 {
                     -1
                 },
                 |mut s| {
-                    *s = kind.build();
+                    *s = kind.build(lb.backend_count);
                     tracing::info!("rota strategy reset: {kind:?}");
                     0
                 },

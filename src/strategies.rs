@@ -302,6 +302,9 @@ impl BalanceStrategy for WeightedRoundRobin {
 #[derive(Debug, Clone, Copy)]
 pub struct Failover {
     primary: usize,
+    /// Cached pool size. Updated on first `pick()`; the FFI path also
+    /// pre-initialises this via [`Failover::with_backend_count`] so that
+    /// `report_error` works correctly when called before any `pick`.
     len: usize,
 }
 
@@ -312,9 +315,23 @@ impl Default for Failover {
 }
 
 impl Failover {
-    /// Create a new failover strategy.
+    /// Create a new failover strategy. `len` starts at 0 and is set on the
+    /// first `pick()` — use [`Failover::with_backend_count`] when the pool
+    /// size is known up-front (e.g. when wired through the C ABI).
     pub const fn new() -> Self {
         Self { primary: 0, len: 0 }
+    }
+
+    /// Create a failover strategy with a known pool size. Use this when the
+    /// pool is constructed from the FFI layer (where the backend count is
+    /// known at create-time). Avoids the silent-no-op in `report_error`
+    /// when `idx == 0` is reported before any `pick` — without a pre-set
+    /// `len`, `(idx + 1) % (idx + 1) == 0` and the primary wouldn't advance.
+    pub const fn with_backend_count(backend_count: usize) -> Self {
+        Self {
+            primary: 0,
+            len: backend_count,
+        }
     }
 }
 
