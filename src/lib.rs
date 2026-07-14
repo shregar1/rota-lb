@@ -87,8 +87,8 @@
 //!
 //! Dual-licensed under MIT or Apache-2.0 at your option.
 
-pub mod backend;
-pub mod balancer;
+/// Configuration types (TLS, etc).
+pub mod configs;
 pub mod constants;
 #[cfg(feature = "discovery")]
 pub mod discovery;
@@ -98,16 +98,25 @@ pub mod factory;
 pub mod ffi;
 pub mod health;
 pub mod retry;
+/// Core services (`LoadBalancer`, etc).
+pub mod services;
+/// Built-in load-balancing strategies.
 pub mod strategies;
-pub mod strategy;
-#[cfg(feature = "tls")]
-pub mod tls;
+/// Core traits (`Backend`, `BalanceStrategy`, etc).
+pub mod traits;
 #[cfg(feature = "tower")]
 pub mod tower;
 
+// Backward-compatible module aliases.
+pub use traits::backend as backend;
+pub use traits::strategy as strategy;
+pub use services::balancer as balancer;
+#[cfg(feature = "tls")]
+pub use configs::tls as tls;
+
 // Public re-exports.
-pub use backend::{Backend, Connection};
-pub use balancer::{GuardedConnection, LoadBalancer};
+pub use traits::backend::{Backend, Connection};
+pub use services::balancer::{GuardedConnection, LoadBalancer};
 pub use constants::*;
 pub use error::Error;
 pub use factory::{BackendFactory, BackendOutput};
@@ -120,7 +129,7 @@ pub use strategies::{
     Failover, HashByAddr, HealthWeighted, LeastConnections, LowestRtt, Random, RoundRobin, Sticky,
     WeightedRoundRobin,
 };
-pub use strategy::{BalanceStrategy, PoolView, TunnelMetrics};
+pub use traits::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
 
 // Discovery
 #[cfg(feature = "discovery")]
@@ -138,4 +147,4 @@ pub use strategies::{
 pub use tower::{LbRequest, LbResponse};
 
 #[cfg(feature = "tls")]
-pub use tls::{TlsBackend, TlsConfig, TlsConnection, TlsError};
+pub use configs::tls::{TlsBackend, TlsConfig, TlsConnection, TlsError};

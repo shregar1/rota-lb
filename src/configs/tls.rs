@@ -17,7 +17,7 @@ use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_rustls::TlsConnector;
 
-use crate::backend::{Backend, Connection};
+use crate::traits::backend::{Backend, Connection};
 use crate::constants::DEFAULT_ALPN_PROTOCOLS;
 use crate::error::Error;
 

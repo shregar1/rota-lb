@@ -30,8 +30,8 @@ use crate::strategies::{
     Failover, HashByAddr, HealthWeighted, LeastConnections, LowestRtt, Random, RoundRobin, Sticky,
     WeightedRoundRobin,
 };
-use crate::strategy::TunnelMetrics;
-use crate::strategy::{BalanceStrategy, PoolView};
+use crate::traits::strategy::TunnelMetrics;
+use crate::traits::strategy::{BalanceStrategy, PoolView};
 
 // ============================================================================
 //  Canonical strategy enum — single source of truth for variant mapping

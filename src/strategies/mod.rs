@@ -13,7 +13,7 @@ use std::time::Duration;
 use crate::constants::{
     DEFAULT_RTT_US, ERROR_PENALTY_US, LOAD_PENALTY_US, MIN_WEIGHT, MS_PER_SECOND, STRATEGY_NAMES,
 };
-use crate::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
+use crate::traits::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
 
 /// Find the index of the tunnel with the lowest RTT. Returns 0 if no RTTs available.
 fn find_lowest_rtt(metrics: &[TunnelMetrics]) -> usize {

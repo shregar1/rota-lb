@@ -1,11 +1,11 @@
 //! Health checking for backends.
 
-use crate::backend::Backend;
+use crate::traits::backend::Backend;
 use crate::constants::{
     DEFAULT_HEALTHY_THRESHOLD, DEFAULT_HEALTH_CHECK_INTERVAL, DEFAULT_HEALTH_CHECK_TIMEOUT,
     DEFAULT_UNHEALTHY_THRESHOLD,
 };
-use crate::strategy::TunnelMetrics;
+use crate::traits::strategy::TunnelMetrics;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};

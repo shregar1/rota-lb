@@ -65,11 +65,11 @@ mod tower_impl {
     }
 
     /// A response from the load balancer: a connection to a backend.
-    pub type LbResponse = crate::balancer::GuardedConnection;
+    pub type LbResponse = crate::services::balancer::GuardedConnection;
 
     // Implement Tower Service for Arc<LoadBalancer>
     // Note: This is the recommended pattern for tower services that need internal state.
-    impl Service<LbRequest> for Arc<crate::balancer::LoadBalancer> {
+    impl Service<LbRequest> for Arc<crate::services::balancer::LoadBalancer> {
         type Response = LbResponse;
         type Error = Error;
         type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -97,6 +97,6 @@ mod tower_impl {
 
 // Re-export the tower types when the feature is enabled
 #[cfg(feature = "tower")]
-pub use crate::balancer::GuardedConnection;
+pub use crate::services::balancer::GuardedConnection;
 #[cfg(feature = "tower")]
 pub use tower_impl::{LbRequest, LbResponse};

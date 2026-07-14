@@ -11,9 +11,9 @@
 
 use async_trait::async_trait;
 
-use crate::backend::Backend;
+use crate::traits::backend::Backend;
 use crate::error::Error;
-use crate::strategy::TunnelMetrics;
+use crate::traits::strategy::TunnelMetrics;
 
 /// What a `BackendFactory::create` call returns: the live backend plus the
 /// metrics the load balancer should seed it with.

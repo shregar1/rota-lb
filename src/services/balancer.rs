@@ -11,11 +11,11 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, warn};
 
-use crate::backend::{Backend, Connection};
+use crate::traits::backend::{Backend, Connection};
 use crate::error::Error;
 use crate::factory::{BackendFactory, BackendOutput};
 use crate::retry::RetryPolicy;
-use crate::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
+use crate::traits::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
 
 /// The load balancer: N backends, dial distributed across them by the
 /// configured strategy.

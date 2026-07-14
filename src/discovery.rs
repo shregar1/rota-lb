@@ -12,8 +12,8 @@ use async_trait::async_trait;
 
 use crate::constants::DEFAULT_HEALTH_CHECK_INTERVAL;
 
-use crate::backend::Backend;
-use crate::balancer::LoadBalancer;
+use crate::traits::backend::Backend;
+use crate::services::balancer::LoadBalancer;
 use crate::error::Error;
 
 #[cfg(feature = "discovery")]
@@ -225,7 +225,7 @@ impl<D: ServiceDiscovery + 'static, F: BackendFactoryFromDescriptor + 'static> D
     }
 
     /// Dial through the load balancer (convenience method).
-    pub async fn dial(&self, addr: &str) -> Result<crate::balancer::GuardedConnection, Error> {
+    pub async fn dial(&self, addr: &str) -> Result<crate::services::balancer::GuardedConnection, Error> {
         self.lb.lock().await.dial(addr).await
     }
 
