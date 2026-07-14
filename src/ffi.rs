@@ -37,41 +37,9 @@ use crate::traits::strategy::{BalanceStrategy, PoolView};
 //  Canonical strategy enum — single source of truth for variant mapping
 // ============================================================================
 
-/// Every load-balancing strategy exposed through the C ABI.
-///
-/// Add a new variant here, then add the corresponding `return` in `build()`
-/// and `name()`. The C-side `strategy_kind` integer (`i32`) must match the
-/// discriminant value exactly.
-#[repr(i32)]
-#[derive(Clone, Copy, Debug)]
-enum FfiStrategy {
-    RoundRobin = 0,
-    Random = 1,
-    LowestRtt = 2,
-    LeastConnections = 3,
-    HashByAddr = 4,
-    WeightedRoundRobin = 5,
-    Failover = 6,
-    HealthWeighted = 7,
-    Sticky = 8,
-}
+use crate::enums::ffi::FfiStrategy;
 
 impl FfiStrategy {
-    const fn from_i32(n: i32) -> Option<Self> {
-        match n {
-            0 => Some(Self::RoundRobin),
-            1 => Some(Self::Random),
-            2 => Some(Self::LowestRtt),
-            3 => Some(Self::LeastConnections),
-            4 => Some(Self::HashByAddr),
-            5 => Some(Self::WeightedRoundRobin),
-            6 => Some(Self::Failover),
-            7 => Some(Self::HealthWeighted),
-            8 => Some(Self::Sticky),
-            _ => None,
-        }
-    }
-
     fn build(self, backend_count: usize) -> Box<dyn BalanceStrategy + Send> {
         // The cast below depends on the highest discriminant matching the
         // length of `STRATEGY_NAMES`. If a new variant is added without
@@ -93,10 +61,6 @@ impl FfiStrategy {
             Self::HealthWeighted => Box::new(HealthWeighted::new()),
             Self::Sticky => Box::new(Sticky::new()),
         }
-    }
-
-    fn name(self) -> &'static str {
-        STRATEGY_NAMES[self as usize]
     }
 }
 

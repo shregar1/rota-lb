@@ -92,6 +92,8 @@ pub mod configs;
 pub mod constants;
 #[cfg(feature = "discovery")]
 pub mod discovery;
+/// Enum types.
+pub mod enums;
 pub mod error;
 pub mod factory;
 #[cfg(feature = "ffi")]

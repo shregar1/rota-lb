@@ -10,16 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 
-/// Health state of a backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HealthState {
-    /// Backend is healthy and receiving traffic.
-    Healthy,
-    /// Backend is unhealthy and should not receive traffic.
-    Unhealthy,
-    /// Initial state before first health check.
-    Unknown,
-}
+pub use crate::enums::health::HealthState;
 
 /// Configuration for active health checks.
 #[derive(Debug, Clone)]
