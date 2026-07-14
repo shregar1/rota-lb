@@ -11,9 +11,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::io::duplex;
 
-use rota::backend::{Backend, Connection};
-use rota::error::Error;
-use rota::{LoadBalancer, round_robin};
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::error::Error;
+use rota_lb::{round_robin, LoadBalancer};
 
 // ============================================================================
 //  Mock backends
@@ -71,7 +71,10 @@ async fn dial_basic_round_robin() {
     drop(conn);
     let metrics = lb.metrics().await;
     assert_eq!(metrics.len(), 3);
-    assert_eq!(metrics[0].total_dials + metrics[1].total_dials + metrics[2].total_dials, 1);
+    assert_eq!(
+        metrics[0].total_dials + metrics[1].total_dials + metrics[2].total_dials,
+        1
+    );
 }
 
 #[tokio::test]
@@ -117,17 +120,18 @@ async fn dial_all_backends_fail_no_retry() {
     }
 
     #[async_trait::async_trait]
-    impl rota::backend::Backend for AlwaysFailBackend {
-        async fn dial(&self, _addr: &str) -> Result<rota::backend::Connection, rota::Error> {
-            self.fail_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Err(rota::Error::Backend("always fails".into()))
+    impl rota_lb::backend::Backend for AlwaysFailBackend {
+        async fn dial(&self, _addr: &str) -> Result<rota_lb::backend::Connection, rota_lb::Error> {
+            self.fail_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(rota_lb::Error::Backend("always fails".into()))
         }
         async fn shutdown(&mut self) {}
     }
 
-    let backends: Vec<Box<dyn rota::backend::Backend>> = vec![
-        Box::new(AlwaysFailBackend { fail_count: Arc::new(AtomicU32::new(0)) }),
-    ];
+    let backends: Vec<Box<dyn rota_lb::backend::Backend>> = vec![Box::new(AlwaysFailBackend {
+        fail_count: Arc::new(AtomicU32::new(0)),
+    })];
     let lb = LoadBalancer::new(backends, round_robin()).unwrap();
 
     let r = lb.dial("test:80").await;
@@ -186,7 +190,7 @@ async fn builder_with_dial_timeout() {
 
 #[tokio::test]
 async fn builder_with_retry_policy() {
-    use rota::retry::ExponentialBackoff;
+    use rota_lb::retry::ExponentialBackoff;
 
     let backends: Vec<Box<dyn Backend>> = vec![Box::new(MockBackend::new("a"))];
     let policy = ExponentialBackoff::new(Duration::from_millis(10));
@@ -205,10 +209,7 @@ async fn builder_with_retry_policy() {
 #[tokio::test]
 async fn builder_requires_strategy() {
     let backends: Vec<Box<dyn Backend>> = vec![Box::new(MockBackend::new("a"))];
-    let result = LoadBalancer::builder()
-        .backends(backends)
-        .build()
-        .await;
+    let result = LoadBalancer::builder().backends(backends).build().await;
     assert!(result.is_err());
 }
 

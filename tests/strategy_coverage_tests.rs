@@ -1,16 +1,18 @@
 //! Additional tests for the strategy module to improve coverage.
 
-use std::time::Duration;
-use rota::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
-use rota::strategies::{
-    RoundRobin, Random, LowestRtt, LeastConnections, HashByAddr,
-    WeightedRoundRobin, Failover, HealthWeighted, Sticky,
-    round_robin, random, lowest_rtt, least_connections, hash_by_addr,
-    weighted_round_robin, failover, health_weighted, sticky,
+use rota_lb::strategies::{
+    failover, hash_by_addr, health_weighted, least_connections, lowest_rtt, random, round_robin,
+    sticky, weighted_round_robin, Failover, HashByAddr, HealthWeighted, LeastConnections,
+    LowestRtt, Random, RoundRobin, Sticky, WeightedRoundRobin,
 };
+use rota_lb::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
+use std::time::Duration;
 
 fn make_view(rtts: &[Option<u64>], active: &[u32], errors: &[u32]) -> PoolView<'static> {
-    let metrics: Vec<TunnelMetrics> = rtts.iter().zip(active.iter()).zip(errors.iter())
+    let metrics: Vec<TunnelMetrics> = rtts
+        .iter()
+        .zip(active.iter())
+        .zip(errors.iter())
         .map(|((rtt, &a), &e)| TunnelMetrics {
             rtt: rtt.map(Duration::from_millis),
             active_connections: a,
@@ -150,15 +152,15 @@ fn sticky_default() {
 #[test]
 fn free_function_constructors() {
     // Just verify they return the right types
-    let _r: Box<dyn rota::strategy::BalanceStrategy> = round_robin();
-    let _r: Box<dyn rota::strategy::BalanceStrategy> = random();
-    let _r: Box<dyn rota::strategy::BalanceStrategy> = lowest_rtt();
-    let _r: Box<dyn rota::strategy::BalanceStrategy> = least_connections();
-    let _r: Box<dyn rota::strategy::BalanceStrategy> = hash_by_addr();
-    let _r: Box<dyn rota::strategy::BalanceStrategy> = weighted_round_robin();
-    let _r: Box<dyn rota::strategy::BalanceStrategy> = failover();
-    let _r: Box<dyn rota::strategy::BalanceStrategy> = health_weighted();
-    let _r: Box<dyn rota::strategy::BalanceStrategy> = sticky();
+    let _r: Box<dyn rota_lb::strategy::BalanceStrategy> = round_robin();
+    let _r: Box<dyn rota_lb::strategy::BalanceStrategy> = random();
+    let _r: Box<dyn rota_lb::strategy::BalanceStrategy> = lowest_rtt();
+    let _r: Box<dyn rota_lb::strategy::BalanceStrategy> = least_connections();
+    let _r: Box<dyn rota_lb::strategy::BalanceStrategy> = hash_by_addr();
+    let _r: Box<dyn rota_lb::strategy::BalanceStrategy> = weighted_round_robin();
+    let _r: Box<dyn rota_lb::strategy::BalanceStrategy> = failover();
+    let _r: Box<dyn rota_lb::strategy::BalanceStrategy> = health_weighted();
+    let _r: Box<dyn rota_lb::strategy::BalanceStrategy> = sticky();
 }
 
 // ============================================================================
@@ -235,8 +237,14 @@ fn health_weighted_with_zero_rtt() {
 fn hash_by_addr_with_special_chars() {
     let mut s = HashByAddr::new();
     let v = make_view(&[Some(10); 3], &[0; 3], &[0; 3]);
-    let v1 = PoolView { dial_addr: "test:80", metrics: v.metrics };
-    let v2 = PoolView { dial_addr: "test:443", metrics: v.metrics };
+    let v1 = PoolView {
+        dial_addr: "test:80",
+        metrics: v.metrics,
+    };
+    let v2 = PoolView {
+        dial_addr: "test:443",
+        metrics: v.metrics,
+    };
     let _ = s.pick(&v1);
     let _ = s.pick(&v2);
 }
@@ -265,7 +273,7 @@ fn random_clone_and_call() {
 #[test]
 #[allow(clippy::clone_on_copy)]
 fn round_robin_clone_independence() {
-    use rota::strategy::BalanceStrategy;
+    use rota_lb::strategy::BalanceStrategy;
     let mut s1 = RoundRobin::new();
     let mut s2 = s1.clone();
     let v = make_view(&[Some(10), Some(20)], &[0; 2], &[0; 2]);

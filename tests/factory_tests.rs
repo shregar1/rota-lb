@@ -5,11 +5,11 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::io::duplex;
 
-use rota::backend::{Backend, Connection};
-use rota::error::Error;
-use rota::BackendFactory;
-use rota::BackendOutput;
-use rota::strategy::TunnelMetrics;
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::error::Error;
+use rota_lb::strategy::TunnelMetrics;
+use rota_lb::BackendFactory;
+use rota_lb::BackendOutput;
 
 struct MockFactory {
     name: String,
@@ -40,7 +40,9 @@ struct MockBackend {
 
 impl MockBackend {
     fn new(name: &str) -> Self {
-        Self { name: name.to_string() }
+        Self {
+            name: name.to_string(),
+        }
     }
 }
 
@@ -57,10 +59,16 @@ impl Backend for MockBackend {
 #[tokio::test]
 async fn from_factories_creates_backends() {
     let factories: Vec<Box<dyn BackendFactory>> = vec![
-        Box::new(MockFactory { name: "a".into(), fail: false }),
-        Box::new(MockFactory { name: "b".into(), fail: false }),
+        Box::new(MockFactory {
+            name: "a".into(),
+            fail: false,
+        }),
+        Box::new(MockFactory {
+            name: "b".into(),
+            fail: false,
+        }),
     ];
-    let lb = rota::LoadBalancer::from_factories(factories, rota::round_robin())
+    let lb = rota_lb::LoadBalancer::from_factories(factories, rota_lb::round_robin())
         .await
         .unwrap();
     let conn = lb.dial("test:80").await.unwrap();
@@ -70,27 +78,37 @@ async fn from_factories_creates_backends() {
 #[tokio::test]
 async fn from_factories_empty_errors() {
     let factories: Vec<Box<dyn BackendFactory>> = vec![];
-    let result = rota::LoadBalancer::from_factories(factories, rota::round_robin()).await;
+    let result = rota_lb::LoadBalancer::from_factories(factories, rota_lb::round_robin()).await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn from_factories_propagates_factory_error() {
-    let factories: Vec<Box<dyn BackendFactory>> = vec![
-        Box::new(MockFactory { name: "a".into(), fail: true }),
-    ];
-    let result = rota::LoadBalancer::from_factories(factories, rota::round_robin()).await;
+    let factories: Vec<Box<dyn BackendFactory>> = vec![Box::new(MockFactory {
+        name: "a".into(),
+        fail: true,
+    })];
+    let result = rota_lb::LoadBalancer::from_factories(factories, rota_lb::round_robin()).await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn from_factories_preserves_order() {
     let factories: Vec<Box<dyn BackendFactory>> = vec![
-        Box::new(MockFactory { name: "a".into(), fail: false }),
-        Box::new(MockFactory { name: "b".into(), fail: false }),
-        Box::new(MockFactory { name: "c".into(), fail: false }),
+        Box::new(MockFactory {
+            name: "a".into(),
+            fail: false,
+        }),
+        Box::new(MockFactory {
+            name: "b".into(),
+            fail: false,
+        }),
+        Box::new(MockFactory {
+            name: "c".into(),
+            fail: false,
+        }),
     ];
-    let lb = rota::LoadBalancer::from_factories(factories, rota::round_robin())
+    let lb = rota_lb::LoadBalancer::from_factories(factories, rota_lb::round_robin())
         .await
         .unwrap();
     assert_eq!(lb.backend_count(), 3);

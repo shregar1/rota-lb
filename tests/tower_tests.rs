@@ -2,12 +2,12 @@
 
 #![cfg(feature = "tower")]
 
-use std::time::Duration;
 use async_trait::async_trait;
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::error::Error;
+use rota_lb::{round_robin, LoadBalancer};
+use std::time::Duration;
 use tokio::io::duplex;
-use rota::backend::{Backend, Connection};
-use rota::error::Error;
-use rota::{LoadBalancer, round_robin};
 
 struct TowerMockBackend {
     #[allow(dead_code)]
@@ -25,7 +25,7 @@ impl Backend for TowerMockBackend {
 
 #[tokio::test]
 async fn tower_lb_request_new() {
-    use rota::tower::LbRequest;
+    use rota_lb::tower::LbRequest;
     let req = LbRequest::new("example.com:443");
     assert_eq!(req.addr, "example.com:443");
     assert!(req.dial_timeout.is_none());
@@ -34,27 +34,25 @@ async fn tower_lb_request_new() {
 
 #[tokio::test]
 async fn tower_lb_request_with_timeout() {
-    use rota::tower::LbRequest;
-    let req = LbRequest::new("example.com:443")
-        .with_dial_timeout(Duration::from_secs(5));
+    use rota_lb::tower::LbRequest;
+    let req = LbRequest::new("example.com:443").with_dial_timeout(Duration::from_secs(5));
     assert_eq!(req.dial_timeout, Some(Duration::from_secs(5)));
 }
 
 #[tokio::test]
 async fn tower_lb_request_with_retry_policy() {
-    use rota::retry::ExponentialBackoff;
-    use rota::tower::LbRequest;
+    use rota_lb::retry::ExponentialBackoff;
+    use rota_lb::tower::LbRequest;
     let policy = ExponentialBackoff::new(Duration::from_millis(10));
-    let req = LbRequest::new("example.com:443")
-        .with_retry_policy(policy);
+    let req = LbRequest::new("example.com:443").with_retry_policy(policy);
     assert!(req.retry_policy.is_some());
 }
 
 #[tokio::test]
 async fn tower_service_basic() {
-    use tower::Service;
+    use rota_lb::tower::LbRequest;
     use std::sync::Arc;
-    use rota::tower::LbRequest;
+    use tower::Service;
 
     let backends: Vec<Box<dyn Backend>> = vec![
         Box::new(TowerMockBackend { name: "a".into() }),

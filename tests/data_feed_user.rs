@@ -39,9 +39,9 @@ use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 
-use rota::backend::{Backend, Connection};
-use rota::error::Error;
-use rota::{
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::error::Error;
+use rota_lb::{
     hash_by_addr, least_connections, lowest_rtt, random, round_robin, sticky, BalanceStrategy,
     ExponentialBackoff, Failover, HashByAddr, LoadBalancer, RoundRobin,
 };
@@ -90,7 +90,10 @@ async fn data_feed_user_round_robin_distribution() {
 
     // Round-robin over 3 backends for 6 dials → 2 dials each.
     for (i, m) in metrics.iter().enumerate() {
-        assert_eq!(m.total_dials, 2, "backend {i} should have 2 dials, got {m:?}");
+        assert_eq!(
+            m.total_dials, 2,
+            "backend {i} should have 2 dials, got {m:?}"
+        );
     }
 }
 
@@ -145,7 +148,11 @@ async fn data_feed_user_parallel_subscribers_all_receive_data() {
             let buf = read_at_least(&mut conn, 64, Duration::from_secs(3))
                 .await
                 .expect("read");
-            assert!(buf.starts_with(b"TICK"), "got: {:?}", &buf[..buf.len().min(32)]);
+            assert!(
+                buf.starts_with(b"TICK"),
+                "got: {:?}",
+                &buf[..buf.len().min(32)]
+            );
             buf.len()
         }));
     }
@@ -307,7 +314,7 @@ async fn data_feed_user_lowest_rtt_picks_fastest_after_metrics() {
     .await;
 
     // Seed metrics so the strategy knows the relative RTTs.
-    use rota::strategy::TunnelMetrics;
+    use rota_lb::strategy::TunnelMetrics;
     use std::time::Duration as D;
     let metrics = vec![
         TunnelMetrics {
@@ -332,7 +339,9 @@ async fn data_feed_user_lowest_rtt_picks_fastest_after_metrics() {
     let lb = LoadBalancer::new_with_metrics(backends, metrics, lowest_rtt(), None, None).unwrap();
 
     let mut conn = lb.dial("feed:9000").await.unwrap();
-    let _ = read_at_least(&mut conn, 16, Duration::from_secs(2)).await.unwrap();
+    let _ = read_at_least(&mut conn, 16, Duration::from_secs(2))
+        .await
+        .unwrap();
     drop(conn);
 
     let m = lb.metrics().await;
@@ -380,8 +389,9 @@ async fn data_feed_user_failover_picks_primary_then_rotates_on_error() {
 async fn data_feed_user_failover_rotates_primary_after_report_error() {
     // Construct a strategy manually and verify its rotation semantics.
     let mut s = Failover::new();
-    let view_metrics: Vec<rota::strategy::TunnelMetrics> = (0..3).map(|_| Default::default()).collect();
-    let view = rota::strategy::PoolView {
+    let view_metrics: Vec<rota_lb::strategy::TunnelMetrics> =
+        (0..3).map(|_| Default::default()).collect();
+    let view = rota_lb::strategy::PoolView {
         dial_addr: "feed:9000",
         metrics: &view_metrics,
     };
@@ -474,10 +484,7 @@ async fn data_feed_user_least_connections_spreads_long_lived_streams() {
     // should land on whichever backend has the fewest active connections.
     let mut conns = Vec::new();
     for i in 0..6 {
-        let c = lb
-            .dial(&format!("symbol-{i}:9000"))
-            .await
-            .unwrap();
+        let c = lb.dial(&format!("symbol-{i}:9000")).await.unwrap();
         conns.push(c);
     }
 
@@ -578,8 +585,10 @@ async fn data_feed_user_dial_timeout_against_slow_backend() {
         async fn shutdown(&mut self) {}
     }
 
-    let backends: Vec<Box<dyn Backend>> =
-        vec![Box::new(SlowBackend { addr: h.addr().to_string(), delay: Duration::from_secs(5) })];
+    let backends: Vec<Box<dyn Backend>> = vec![Box::new(SlowBackend {
+        addr: h.addr().to_string(),
+        delay: Duration::from_secs(5),
+    })];
 
     let lb = LoadBalancer::builder()
         .backends(backends)
@@ -610,9 +619,12 @@ async fn data_feed_user_hot_add_backend_is_used_immediately() {
     let h1 = spawn_feed_server(FeedServerConfig::default()).await;
     let h2 = spawn_feed_server(FeedServerConfig::default()).await;
 
-    let mut lb = LoadBalancer::new(backends_from(std::slice::from_ref(&h0)), round_robin()).unwrap();
+    let mut lb =
+        LoadBalancer::new(backends_from(std::slice::from_ref(&h0)), round_robin()).unwrap();
     let mut conn = lb.dial("feed:9000").await.unwrap();
-    let _ = read_at_least(&mut conn, 16, Duration::from_secs(1)).await.unwrap();
+    let _ = read_at_least(&mut conn, 16, Duration::from_secs(1))
+        .await
+        .unwrap();
     drop(conn);
 
     // Add two more.
@@ -637,9 +649,11 @@ async fn data_feed_user_hot_remove_backend_then_dial_works() {
     let h1 = spawn_feed_server(FeedServerConfig::default()).await;
     let h2 = spawn_feed_server(FeedServerConfig::default()).await;
 
-    let mut lb =
-        LoadBalancer::new(backends_from(&[h0.clone(), h1.clone(), h2.clone()]), round_robin())
-            .unwrap();
+    let mut lb = LoadBalancer::new(
+        backends_from(&[h0.clone(), h1.clone(), h2.clone()]),
+        round_robin(),
+    )
+    .unwrap();
     assert_eq!(lb.backend_count(), 3);
 
     // Hold a long-lived connection to backend 1.
@@ -670,11 +684,8 @@ async fn data_feed_user_hot_remove_backend_by_id() {
     let h0 = spawn_feed_server(FeedServerConfig::default()).await;
     let h1 = spawn_feed_server(FeedServerConfig::default()).await;
 
-    let mut lb = LoadBalancer::new(
-        backends_from(&[h0.clone(), h1.clone()]),
-        round_robin(),
-    )
-    .unwrap();
+    let mut lb =
+        LoadBalancer::new(backends_from(&[h0.clone(), h1.clone()]), round_robin()).unwrap();
     lb.add_backend_with_id(
         "feed-a".into(),
         Box::new(TcpBackend::new(h0.addr())) as Box<dyn Backend>,
@@ -970,7 +981,10 @@ async fn data_feed_user_end_to_end_streaming_pipeline() {
     // least one dial.
     let metrics = lb.metrics().await;
     let served = metrics.iter().filter(|m| m.total_dials >= 1).count();
-    assert!(served >= 2, "round robin should hit multiple servers, {metrics:?}");
+    assert!(
+        served >= 2,
+        "round robin should hit multiple servers, {metrics:?}"
+    );
 }
 
 // ============================================================================
@@ -979,10 +993,9 @@ async fn data_feed_user_end_to_end_streaming_pipeline() {
 
 #[tokio::test]
 async fn data_feed_user_swap_strategy_at_runtime() {
-    let handles: Vec<FeedServerHandle> = futures::future::join_all((0..3).map(|_| {
-        spawn_feed_server(FeedServerConfig::default())
-    }))
-    .await;
+    let handles: Vec<FeedServerHandle> =
+        futures::future::join_all((0..3).map(|_| spawn_feed_server(FeedServerConfig::default())))
+            .await;
     let mut lb = LoadBalancer::new(backends_from(&handles), round_robin()).unwrap();
 
     // Phase 1: round-robin.

@@ -1,6 +1,6 @@
 //! Tests for the error module.
 
-use rota::error::Error;
+use rota_lb::error::Error;
 use std::io;
 
 #[test]

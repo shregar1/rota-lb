@@ -34,7 +34,7 @@
 //! use std::pin::Pin;
 //! use async_trait::async_trait;
 //! use tokio::io::{duplex, AsyncRead, AsyncWrite};
-//! use rota::{Backend, Connection, LoadBalancer, round_robin, Error};
+//! use rota_lb::{Backend, Connection, LoadBalancer, round_robin, Error};
 //!
 //! struct DuplexBackend;
 //!
@@ -47,7 +47,7 @@
 //!     async fn shutdown(&mut self) {}
 //! }
 //!
-//! # async fn example() -> Result<(), rota::Error> {
+//! # async fn example() -> Result<(), rota_lb::Error> {
 //! let backends: Vec<Box<dyn Backend>> = (0..3)
 //!     .map(|_| Box::new(DuplexBackend) as Box<dyn Backend>)
 //!     .collect();
@@ -87,8 +87,8 @@
 //!
 //! Dual-licensed under MIT or Apache-2.0 at your option.
 
-pub mod balancer;
 pub mod backend;
+pub mod balancer;
 pub mod constants;
 #[cfg(feature = "discovery")]
 pub mod discovery;
@@ -100,24 +100,27 @@ pub mod health;
 pub mod retry;
 pub mod strategies;
 pub mod strategy;
-#[cfg(feature = "tower")]
-pub mod tower;
 #[cfg(feature = "tls")]
 pub mod tls;
+#[cfg(feature = "tower")]
+pub mod tower;
 
 // Public re-exports.
-pub use balancer::{GuardedConnection, LoadBalancer};
 pub use backend::{Backend, Connection};
+pub use balancer::{GuardedConnection, LoadBalancer};
 pub use constants::*;
 pub use error::Error;
 pub use factory::{BackendFactory, BackendOutput};
-pub use health::{HealthCheckConfig, HealthChecker, HealthState, is_healthy, record_dial_result};
-pub use retry::{ExponentialBackoff, FixedRetry, NoRetry, RetryOnError, RetryPolicy, RetryPolicyBuilder, is_transient_error};
-pub use strategy::{BalanceStrategy, PoolView, TunnelMetrics};
-pub use strategies::{
-    Failover, HashByAddr, HealthWeighted, LeastConnections, LowestRtt, Random, RoundRobin,
-    Sticky, WeightedRoundRobin,
+pub use health::{is_healthy, record_dial_result, HealthCheckConfig, HealthChecker, HealthState};
+pub use retry::{
+    is_transient_error, ExponentialBackoff, FixedRetry, NoRetry, RetryOnError, RetryPolicy,
+    RetryPolicyBuilder,
 };
+pub use strategies::{
+    Failover, HashByAddr, HealthWeighted, LeastConnections, LowestRtt, Random, RoundRobin, Sticky,
+    WeightedRoundRobin,
+};
+pub use strategy::{BalanceStrategy, PoolView, TunnelMetrics};
 
 // Discovery
 #[cfg(feature = "discovery")]

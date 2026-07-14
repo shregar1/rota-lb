@@ -1,22 +1,23 @@
 //! More balancer tests to push coverage above 90%.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::io::duplex;
 
-use rota::backend::{Backend, Connection};
-use rota::error::Error;
-use rota::strategy::TunnelMetrics;
-use rota::strategies::{
-    round_robin, failover, sticky, hash_by_addr, weighted_round_robin,
-    lowest_rtt, health_weighted, least_connections, random,
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::error::Error;
+use rota_lb::retry::{ExponentialBackoff, FixedRetry, NoRetry};
+use rota_lb::strategies::{
+    failover, hash_by_addr, health_weighted, least_connections, lowest_rtt, random, round_robin,
+    sticky, weighted_round_robin,
 };
-use rota::retry::{ExponentialBackoff, FixedRetry, NoRetry, RetryPolicy};
-use rota::LoadBalancer;
+use rota_lb::strategy::TunnelMetrics;
+use rota_lb::LoadBalancer;
 
+#[allow(dead_code)]
 struct FinalTestBackend {
     name: String,
     fail_count: Arc<AtomicU32>,
@@ -123,7 +124,8 @@ async fn dial_with_initial_metrics() {
         total_dials: 0,
         total_errors: 0,
     }];
-    let lb = LoadBalancer::new_with_metrics(backends, initial_metrics, round_robin(), None, None).unwrap();
+    let lb = LoadBalancer::new_with_metrics(backends, initial_metrics, round_robin(), None, None)
+        .unwrap();
     let r = lb.dial("a:80").await;
     assert!(r.is_ok());
 }

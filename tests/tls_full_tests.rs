@@ -2,9 +2,9 @@
 
 #![cfg(feature = "tls")]
 
-use std::time::Duration;
-use rota::tls::{TlsConfig, TlsError};
+use rota_lb::tls::{TlsConfig, TlsError};
 use std::io;
+use std::time::Duration;
 
 #[test]
 fn tls_config_with_connect_timeout_default() {
@@ -103,16 +103,15 @@ fn tls_config_build_with_all_options() {
 
 #[test]
 fn tls_config_build_uses_correct_alpn() {
-    let config = TlsConfig::new("example.com")
-        .with_alpn_protocols(vec![b"h2".to_vec(), b"spdy/3".to_vec()]);
+    let config =
+        TlsConfig::new("example.com").with_alpn_protocols(vec![b"h2".to_vec(), b"spdy/3".to_vec()]);
     let result = config.build_client_config();
     let _ = result;
 }
 
 #[test]
 fn tls_config_no_alpn() {
-    let config = TlsConfig::new("example.com")
-        .with_alpn_protocols(vec![]);
+    let config = TlsConfig::new("example.com").with_alpn_protocols(vec![]);
     let result = config.build_client_config();
     let _ = result;
 }

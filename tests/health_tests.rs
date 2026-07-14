@@ -1,17 +1,19 @@
 //! Tests for the health checking module.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::io::duplex;
 use tokio::sync::Mutex;
 
-use rota::backend::{Backend, Connection};
-use rota::error::Error;
-use rota::health::{HealthCheckConfig, HealthChecker, HealthState, is_healthy, record_dial_result};
-use rota::strategy::TunnelMetrics;
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::error::Error;
+use rota_lb::health::{
+    is_healthy, record_dial_result, HealthCheckConfig, HealthChecker, HealthState,
+};
+use rota_lb::strategy::TunnelMetrics;
 
 struct HealthMockBackend {
     fail_count: Arc<AtomicU32>,
@@ -58,19 +60,28 @@ fn is_healthy_with_no_errors() {
 
 #[test]
 fn is_healthy_below_threshold() {
-    let metrics = TunnelMetrics { recent_errors: 2, ..Default::default() };
+    let metrics = TunnelMetrics {
+        recent_errors: 2,
+        ..Default::default()
+    };
     assert!(is_healthy(&metrics, 3));
 }
 
 #[test]
 fn is_healthy_at_threshold() {
-    let metrics = TunnelMetrics { recent_errors: 3, ..Default::default() };
+    let metrics = TunnelMetrics {
+        recent_errors: 3,
+        ..Default::default()
+    };
     assert!(!is_healthy(&metrics, 3));
 }
 
 #[test]
 fn is_healthy_above_threshold() {
-    let metrics = TunnelMetrics { recent_errors: 5, ..Default::default() };
+    let metrics = TunnelMetrics {
+        recent_errors: 5,
+        ..Default::default()
+    };
     assert!(!is_healthy(&metrics, 3));
 }
 
@@ -194,7 +205,7 @@ async fn lb_with_failing_backend_updates_metrics() {
         Box::new(HealthMockBackend::with_failures("a", 1)),
         Box::new(HealthMockBackend::new("b")),
     ];
-    let lb = rota::LoadBalancer::new(backends, rota::round_robin()).unwrap();
+    let lb = rota_lb::LoadBalancer::new(backends, rota_lb::round_robin()).unwrap();
 
     let r = lb.dial("test:80").await;
     assert!(r.is_err());
@@ -205,9 +216,7 @@ async fn lb_with_failing_backend_updates_metrics() {
 
 #[tokio::test]
 async fn health_checker_spawn_and_shutdown() {
-    let backends: Vec<Box<dyn Backend>> = vec![
-        Box::new(HealthMockBackend::new("a")),
-    ];
+    let backends: Vec<Box<dyn Backend>> = vec![Box::new(HealthMockBackend::new("a"))];
     let metrics = Arc::new(Mutex::new(vec![TunnelMetrics::default()]));
     let config = HealthCheckConfig {
         interval: Duration::from_millis(50),
@@ -223,9 +232,8 @@ async fn health_checker_spawn_and_shutdown() {
 
 #[tokio::test]
 async fn health_checker_with_failing_backend() {
-    let backends: Vec<Box<dyn Backend>> = vec![
-        Box::new(HealthMockBackend::with_failures("a", 100)),
-    ];
+    let backends: Vec<Box<dyn Backend>> =
+        vec![Box::new(HealthMockBackend::with_failures("a", 100))];
     let metrics = Arc::new(Mutex::new(vec![TunnelMetrics::default()]));
     let config = HealthCheckConfig {
         interval: Duration::from_millis(50),

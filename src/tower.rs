@@ -15,9 +15,9 @@ mod tower_impl {
     use std::sync::Arc;
     use std::task::{Context, Poll};
 
-    use tower::Service;
     use crate::error::Error;
     use crate::retry::RetryPolicy;
+    use tower::Service;
 
     /// A request for the load balancer service.
     #[derive(Clone)]
@@ -82,20 +82,21 @@ mod tower_impl {
             }
         }
 
-    fn call(&mut self, req: LbRequest) -> Self::Future {
-        let addr = req.addr;
-        let dial_timeout = req.dial_timeout;
-        let retry_policy = req.retry_policy;
-        let lb = self.clone();
-        Box::pin(async move {
-            lb.dial_with_options(&addr, dial_timeout, retry_policy).await
-        })
-    }
+        fn call(&mut self, req: LbRequest) -> Self::Future {
+            let addr = req.addr;
+            let dial_timeout = req.dial_timeout;
+            let retry_policy = req.retry_policy;
+            let lb = self.clone();
+            Box::pin(async move {
+                lb.dial_with_options(&addr, dial_timeout, retry_policy)
+                    .await
+            })
+        }
     }
 }
 
 // Re-export the tower types when the feature is enabled
 #[cfg(feature = "tower")]
-pub use tower_impl::{LbRequest, LbResponse};
-#[cfg(feature = "tower")]
 pub use crate::balancer::GuardedConnection;
+#[cfg(feature = "tower")]
+pub use tower_impl::{LbRequest, LbResponse};

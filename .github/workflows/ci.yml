@@ -62,14 +62,3 @@ jobs:
       - name: Run tests with MSRV
         run: cargo test --all-targets
 
-  bench:
-    name: Benchmarks
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Run benchmarks
-        run: cargo bench --no-run
-      - name: Run benchmarks
-        run: cargo bench

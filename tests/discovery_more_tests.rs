@@ -2,22 +2,18 @@
 
 #![cfg(feature = "discovery")]
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::io::duplex;
 
-use rota::backend::{Backend, Connection};
-use rota::discovery::{
-    BackendDescriptor, BackendFactoryFromDescriptor, Discover, ServiceDiscovery,
-    StaticDiscovery,
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::discovery::{
+    BackendDescriptor, BackendFactoryFromDescriptor, Discover, ServiceDiscovery, StaticDiscovery,
 };
-use rota::error::Error;
-use rota::strategy::TunnelMetrics;
-use rota::strategies::round_robin;
-use rota::LoadBalancer;
+use rota_lb::error::Error;
+use rota_lb::strategies::round_robin;
+use rota_lb::LoadBalancer;
 
 struct DiscBackend;
 
@@ -98,7 +94,7 @@ async fn discover_with_multiple_descriptors() {
 #[tokio::test]
 async fn discover_static_discovery() {
     let backends: Vec<Box<dyn Backend>> = vec![Box::new(DiscBackend)];
-    let lb = LoadBalancer::new(backends, round_robin()).unwrap();
+    let _lb = LoadBalancer::new(backends, round_robin()).unwrap();
     let descriptors = vec![BackendDescriptor::new("a", "localhost:8001")];
     let discovery = StaticDiscovery::new(descriptors);
     let result = discovery.discover().await;

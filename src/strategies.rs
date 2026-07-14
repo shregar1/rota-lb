@@ -10,7 +10,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
-use crate::constants::{DEFAULT_RTT_US, ERROR_PENALTY_US, LOAD_PENALTY_US, MIN_WEIGHT, MS_PER_SECOND, STRATEGY_NAMES};
+use crate::constants::{
+    DEFAULT_RTT_US, ERROR_PENALTY_US, LOAD_PENALTY_US, MIN_WEIGHT, MS_PER_SECOND, STRATEGY_NAMES,
+};
 use crate::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
 
 /// Find the index of the tunnel with the lowest RTT. Returns 0 if no RTTs available.
@@ -388,7 +390,9 @@ impl BalanceStrategy for HealthWeighted {
         let mut best = 0;
         let mut best_score = u64::MAX;
         for (i, m) in view.metrics.iter().enumerate() {
-            let rtt_us = m.rtt.map_or(DEFAULT_RTT_US, |r| u64::try_from(r.as_micros()).unwrap_or(DEFAULT_RTT_US));
+            let rtt_us = m.rtt.map_or(DEFAULT_RTT_US, |r| {
+                u64::try_from(r.as_micros()).unwrap_or(DEFAULT_RTT_US)
+            });
             let error_penalty = u64::from(m.recent_errors) * ERROR_PENALTY_US;
             let load_penalty = u64::from(m.active_connections) * LOAD_PENALTY_US;
             let score = rtt_us + error_penalty + load_penalty;
@@ -471,7 +475,10 @@ mod tests {
     fn round_robin_walks_and_wraps() {
         let mut s = RoundRobin::new();
         let metrics = make_metrics(&[Some(10), Some(20), Some(30)], &[0, 0, 0]);
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         assert_eq!(s.pick(&v), 0);
         assert_eq!(s.pick(&v), 1);
         assert_eq!(s.pick(&v), 2);
@@ -482,7 +489,10 @@ mod tests {
     fn random_picks_in_range() {
         let mut s = Random::new();
         let metrics = make_metrics(&[Some(10), Some(20), Some(30)], &[0, 0, 0]);
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         for _ in 0..100 {
             assert!(s.pick(&v) < 3);
         }
@@ -492,7 +502,10 @@ mod tests {
     fn lowest_rtt_picks_fastest() {
         let mut s = LowestRtt::new();
         let metrics = make_metrics(&[Some(30), Some(10), Some(20)], &[0, 0, 0]);
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         assert_eq!(s.pick(&v), 1);
     }
 
@@ -500,7 +513,10 @@ mod tests {
     fn lowest_rtt_with_no_rtts_picks_first() {
         let mut s = LowestRtt::new();
         let metrics = make_metrics(&[None, None, None], &[0, 0, 0]);
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         assert_eq!(s.pick(&v), 0);
     }
 
@@ -508,7 +524,10 @@ mod tests {
     fn least_connections_picks_min() {
         let mut s = LeastConnections::new();
         let metrics = make_metrics(&[Some(10), Some(10), Some(10)], &[5, 2, 8]);
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         assert_eq!(s.pick(&v), 1);
     }
 
@@ -516,7 +535,10 @@ mod tests {
     fn least_connections_tiebreaks_by_rtt() {
         let mut s = LeastConnections::new();
         let metrics = make_metrics(&[Some(10), Some(20), Some(30)], &[2, 2, 2]);
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         assert_eq!(s.pick(&v), 0);
     }
 
@@ -524,7 +546,10 @@ mod tests {
     fn hash_by_addr_is_sticky() {
         let mut s = HashByAddr::new();
         let metrics = make_metrics(&[Some(10), Some(20), Some(30)], &[0; 3]);
-        let v = PoolView { dial_addr: "api.example.com:443", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "api.example.com:443",
+            metrics: &metrics,
+        };
         let a = s.pick(&v);
         let b = s.pick(&v);
         assert_eq!(a, b, "same address should pick the same tunnel");
@@ -537,7 +562,10 @@ mod tests {
         for i in 0..30 {
             let addr = format!("host{i}.example.com:80");
             let metrics = make_metrics(&[Some(10), Some(20), Some(30)], &[0; 3]);
-            let v = PoolView { dial_addr: &addr, metrics: &metrics };
+            let v = PoolView {
+                dial_addr: &addr,
+                metrics: &metrics,
+            };
             hits[s.pick(&v)] += 1;
         }
         assert!(hits.iter().all(|&h| h > 0));
@@ -547,7 +575,10 @@ mod tests {
     fn weighted_round_robin_favors_fast_tunnel() {
         let mut s = WeightedRoundRobin::new();
         let metrics = make_metrics(&[Some(10), Some(100), Some(1000)], &[0; 3]);
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         let mut hits = [0usize; 3];
         for _ in 0..111 {
             hits[s.pick(&v)] += 1;
@@ -563,7 +594,10 @@ mod tests {
         // picks[i] / weights[i] ratio).
         let mut s = WeightedRoundRobin::new();
         let metrics = make_metrics(&[Some(333), Some(1000), Some(1000)], &[0; 3]);
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         let mut seq = Vec::new();
         for _ in 0..5 {
             seq.push(s.pick(&v));
@@ -575,7 +609,10 @@ mod tests {
     fn failover_returns_primary() {
         let mut s = Failover::new();
         let metrics = make_metrics(&[Some(10), Some(20), Some(30)], &[0; 3]);
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         assert_eq!(s.pick(&v), 0);
         assert_eq!(s.pick(&v), 0);
     }
@@ -584,7 +621,10 @@ mod tests {
     fn failover_rotates_on_error() {
         let mut s = Failover::new();
         let metrics = make_metrics(&[Some(10), Some(20), Some(30)], &[0; 3]);
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         s.pick(&v); // initialise len
         s.report_error(0);
         assert_eq!(s.pick(&v), 1);
@@ -598,7 +638,10 @@ mod tests {
     fn failover_ignores_unrelated_errors() {
         let mut s = Failover::new();
         let metrics = make_metrics(&[Some(10), Some(20), Some(30)], &[0; 3]);
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         s.pick(&v);
         s.report_error(1);
         assert_eq!(s.pick(&v), 0);
@@ -608,7 +651,10 @@ mod tests {
     fn health_weighted_picks_fastest_with_no_errors() {
         let mut s = HealthWeighted::new();
         let metrics = make_metrics(&[Some(30), Some(10), Some(20)], &[0; 3]);
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         assert_eq!(s.pick(&v), 1);
     }
 
@@ -616,14 +662,20 @@ mod tests {
     fn health_weighted_demotes_erroring_tunnel() {
         let mut s = HealthWeighted::new();
         let metrics = vec![
-            TunnelMetrics { rtt: Some(Duration::from_millis(10)), ..Default::default() },
+            TunnelMetrics {
+                rtt: Some(Duration::from_millis(10)),
+                ..Default::default()
+            },
             TunnelMetrics {
                 rtt: Some(Duration::from_millis(10)),
                 recent_errors: 1,
                 ..Default::default()
             },
         ];
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         assert_eq!(s.pick(&v), 0);
     }
 
@@ -631,10 +683,21 @@ mod tests {
     fn health_weighted_adds_load_penalty() {
         let mut s = HealthWeighted::new();
         let metrics = vec![
-            TunnelMetrics { rtt: Some(Duration::from_millis(10)), active_connections: 0, ..Default::default() },
-            TunnelMetrics { rtt: Some(Duration::from_millis(10)), active_connections: 5, ..Default::default() },
+            TunnelMetrics {
+                rtt: Some(Duration::from_millis(10)),
+                active_connections: 0,
+                ..Default::default()
+            },
+            TunnelMetrics {
+                rtt: Some(Duration::from_millis(10)),
+                active_connections: 5,
+                ..Default::default()
+            },
         ];
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         assert_eq!(s.pick(&v), 0);
     }
 
@@ -642,7 +705,10 @@ mod tests {
     fn sticky_picks_lowest_rtt_on_first_call() {
         let mut s = Sticky::new();
         let metrics = make_metrics(&[Some(30), Some(10), Some(20)], &[0; 3]);
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         assert_eq!(s.pick(&v), 1);
     }
 
@@ -650,7 +716,10 @@ mod tests {
     fn sticky_pins_to_first_choice() {
         let mut s = Sticky::new();
         let metrics = make_metrics(&[Some(30), Some(10), Some(20)], &[0; 3]);
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         let first = s.pick(&v);
         for _ in 0..100 {
             assert_eq!(s.pick(&v), first);
@@ -661,11 +730,17 @@ mod tests {
     fn sticky_does_not_repick_when_metrics_change() {
         let mut s = Sticky::new();
         let m1 = make_metrics(&[Some(30), Some(10), Some(20)], &[0; 3]);
-        let v1 = PoolView { dial_addr: "h", metrics: &m1 };
+        let v1 = PoolView {
+            dial_addr: "h",
+            metrics: &m1,
+        };
         let first = s.pick(&v1);
         assert_eq!(first, 1);
         let m2 = make_metrics(&[Some(5), Some(100), Some(200)], &[0; 3]);
-        let v2 = PoolView { dial_addr: "h", metrics: &m2 };
+        let v2 = PoolView {
+            dial_addr: "h",
+            metrics: &m2,
+        };
         for _ in 0..10 {
             assert_eq!(s.pick(&v2), 1);
         }
@@ -675,7 +750,10 @@ mod tests {
     fn sticky_report_error_does_not_release_pin() {
         let mut s = Sticky::new();
         let metrics = make_metrics(&[Some(30), Some(10), Some(20)], &[0; 3]);
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         let first = s.pick(&v);
         s.report_error(first);
         s.report_error(first);
@@ -686,7 +764,10 @@ mod tests {
     fn sticky_picks_first_when_no_rtts() {
         let mut s = Sticky::new();
         let metrics = make_metrics(&[None, None, None], &[0; 3]);
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
         assert_eq!(s.pick(&v), 0);
         for _ in 0..5 {
             assert_eq!(s.pick(&v), 0);
@@ -750,10 +831,19 @@ mod constructor_tests {
     #[test]
     fn free_constructors_return_boxed_strategies() {
         let metrics = vec![
-            TunnelMetrics { rtt: Some(Duration::from_millis(10)), ..Default::default() },
-            TunnelMetrics { rtt: Some(Duration::from_millis(20)), ..Default::default() },
+            TunnelMetrics {
+                rtt: Some(Duration::from_millis(10)),
+                ..Default::default()
+            },
+            TunnelMetrics {
+                rtt: Some(Duration::from_millis(20)),
+                ..Default::default()
+            },
         ];
-        let v = PoolView { dial_addr: "h", metrics: &metrics };
+        let v = PoolView {
+            dial_addr: "h",
+            metrics: &metrics,
+        };
 
         let mut strategies: Vec<Box<dyn BalanceStrategy>> = vec![
             round_robin(),

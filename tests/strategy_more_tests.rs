@@ -1,13 +1,12 @@
 //! More strategy tests to improve coverage.
 
-use std::time::Duration;
-use rota::{BalanceStrategy, PoolView, TunnelMetrics};
-use rota::strategies::{
-    round_robin, random, lowest_rtt, least_connections, hash_by_addr,
-    weighted_round_robin, failover, health_weighted, sticky,
-    RoundRobin, Random, LowestRtt, LeastConnections, HashByAddr,
-    WeightedRoundRobin, Failover, HealthWeighted, Sticky,
+use rota_lb::strategies::{
+    failover, hash_by_addr, health_weighted, least_connections, lowest_rtt, random, round_robin,
+    sticky, weighted_round_robin, Failover, HashByAddr, HealthWeighted, LeastConnections,
+    LowestRtt, Random, RoundRobin, Sticky, WeightedRoundRobin,
 };
+use rota_lb::{BalanceStrategy, PoolView, TunnelMetrics};
+use std::time::Duration;
 
 fn make_view<'a>(metrics: &'a [TunnelMetrics], addr: &'a str) -> PoolView<'a> {
     PoolView {
@@ -17,7 +16,9 @@ fn make_view<'a>(metrics: &'a [TunnelMetrics], addr: &'a str) -> PoolView<'a> {
 }
 
 fn make_metrics(rtts: &[Option<u64>], active: &[u32], errors: &[u32]) -> Vec<TunnelMetrics> {
-    rtts.iter().zip(active.iter()).zip(errors.iter())
+    rtts.iter()
+        .zip(active.iter())
+        .zip(errors.iter())
         .map(|((rtt, &a), &e)| TunnelMetrics {
             rtt: rtt.map(Duration::from_millis),
             active_connections: a,
@@ -148,7 +149,7 @@ fn sticky_debug() {
 #[test]
 fn round_robin_clone_independence() {
     let mut s1 = RoundRobin::new();
-    let mut s2 = s1.clone();
+    let mut s2 = s1;
     let metrics = make_metrics(&[Some(10), Some(20)], &[0, 0], &[0, 0]);
     let v = make_view(&metrics, "a:80");
     assert_eq!(s1.pick(&v), 0);
@@ -273,11 +274,7 @@ fn failover_advances_multiple_times() {
 #[test]
 fn health_weighted_prefers_lower_errors() {
     let mut s = HealthWeighted::new();
-    let metrics = make_metrics(
-        &[Some(10), Some(10)],
-        &[0, 0],
-        &[0, 5],
-    );
+    let metrics = make_metrics(&[Some(10), Some(10)], &[0, 0], &[0, 5]);
     let v = make_view(&metrics, "a:80");
     // Backend 0 has no errors, backend 1 has 5 errors
     // HealthWeighted should prefer backend 0
@@ -287,11 +284,7 @@ fn health_weighted_prefers_lower_errors() {
 #[test]
 fn health_weighted_considers_load() {
     let mut s = HealthWeighted::new();
-    let metrics = make_metrics(
-        &[Some(10), Some(10)],
-        &[0, 10],
-        &[0, 0],
-    );
+    let metrics = make_metrics(&[Some(10), Some(10)], &[0, 10], &[0, 0]);
     let v = make_view(&metrics, "a:80");
     // Backend 0 has no load, backend 1 has load
     // HealthWeighted should prefer backend 0

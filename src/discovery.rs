@@ -12,8 +12,8 @@ use async_trait::async_trait;
 
 use crate::constants::DEFAULT_HEALTH_CHECK_INTERVAL;
 
-use crate::balancer::LoadBalancer;
 use crate::backend::Backend;
+use crate::balancer::LoadBalancer;
 use crate::error::Error;
 
 #[cfg(feature = "discovery")]
@@ -286,7 +286,8 @@ impl<D: ServiceDiscovery + 'static, F: BackendFactoryFromDescriptor + 'static> D
             let exists = current_ids.iter().any(|id| id.as_deref() == Some(&desc.id));
             if !exists {
                 let backend = factory.create(desc).await.map_err(Into::into)?;
-                lb.add_backend_with_id(desc.id.clone(), Box::new(backend)).await;
+                lb.add_backend_with_id(desc.id.clone(), Box::new(backend))
+                    .await;
             }
         }
 
@@ -351,7 +352,9 @@ pub mod dns {
     impl ServiceDiscovery for DnsDiscovery {
         async fn discover(&self) -> Result<Vec<BackendDescriptor>, Error> {
             let srv_name = format!("{}.{}", self.srv_prefix, self.service_name);
-            let response = self.resolver.srv_lookup(&srv_name)
+            let response = self
+                .resolver
+                .srv_lookup(&srv_name)
                 .map_err(|e| Error::Backend(format!("DNS lookup failed: {e}")))?;
 
             let mut descriptors = Vec::new();
@@ -378,9 +381,9 @@ pub mod dns {
 pub mod consul {
     use super::{BackendDescriptor, Error, ServiceDiscovery};
     use async_trait::async_trait;
-    use std::collections::HashMap;
-    use consulrs::client::{ConsulClient, ConsulClientSettingsBuilder};
     use consulrs::catalog;
+    use consulrs::client::{ConsulClient, ConsulClientSettingsBuilder};
+    use std::collections::HashMap;
 
     /// Consul service discovery source.
     pub struct ConsulDiscovery {
@@ -460,7 +463,7 @@ pub mod consul {
                     );
                     continue;
                 }
-                let addr = format!("{}:{}", address, port);
+                let addr = format!("{address}:{port}");
                 let id = entry.service_id.unwrap_or_default();
                 let mut metadata = HashMap::new();
                 if let Some(meta) = &entry.service_meta {
@@ -490,8 +493,8 @@ pub mod consul {
 pub mod etcd {
     use super::{BackendDescriptor, Error, ServiceDiscovery};
     use async_trait::async_trait;
-    use std::collections::HashMap;
     use etcd_client::Client;
+    use std::collections::HashMap;
     use tokio::sync::Mutex;
 
     /// etcd service discovery source.
@@ -511,9 +514,13 @@ pub mod etcd {
     impl EtcdDiscovery {
         /// Create a new etcd discovery source for the given endpoints and key prefix.
         pub async fn new(etcd_endpoints: Vec<String>, prefix: String) -> Result<Self, Error> {
-            let client = Client::connect(etcd_endpoints, None).await
+            let client = Client::connect(etcd_endpoints, None)
+                .await
                 .map_err(|e| Error::Backend(format!("etcd connect: {e}")))?;
-            Ok(Self { client: Mutex::new(client), prefix })
+            Ok(Self {
+                client: Mutex::new(client),
+                prefix,
+            })
         }
     }
 
@@ -524,7 +531,10 @@ pub mod etcd {
             let mut descriptors = Vec::new();
             let mut client = self.client.lock().await;
             let resp = client
-                .get(self.prefix.clone(), Some(etcd_client::GetOptions::new().with_prefix()))
+                .get(
+                    self.prefix.clone(),
+                    Some(etcd_client::GetOptions::new().with_prefix()),
+                )
                 .await
                 .map_err(|e| Error::Backend(format!("etcd get: {e}")))?;
 

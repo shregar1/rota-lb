@@ -1,15 +1,20 @@
 use proptest::prelude::*;
-use rota::{BalanceStrategy, PoolView, TunnelMetrics, RoundRobin, Random, LowestRtt, LeastConnections, HashByAddr, WeightedRoundRobin, Failover, HealthWeighted, Sticky};
+use rota_lb::{
+    BalanceStrategy, Failover, HashByAddr, HealthWeighted, LeastConnections, LowestRtt, PoolView,
+    Random, RoundRobin, Sticky, TunnelMetrics, WeightedRoundRobin,
+};
 use std::time::Duration;
 
 fn make_pool_view(n: usize) -> PoolView<'static> {
-    let metrics = (0..n).map(|i| TunnelMetrics {
-        rtt: Some(Duration::from_millis((i + 1) as u64 * 10)),
-        active_connections: 0,
-        recent_errors: 0,
-        total_dials: 0,
-        total_errors: 0,
-    }).collect::<Vec<_>>();
+    let metrics = (0..n)
+        .map(|i| TunnelMetrics {
+            rtt: Some(Duration::from_millis((i + 1) as u64 * 10)),
+            active_connections: 0,
+            recent_errors: 0,
+            total_dials: 0,
+            total_errors: 0,
+        })
+        .collect::<Vec<_>>();
     let addr = format!("host{}.example.com:443", n);
     PoolView {
         dial_addr: Box::leak(addr.into_boxed_str()),
@@ -18,14 +23,22 @@ fn make_pool_view(n: usize) -> PoolView<'static> {
 }
 
 #[allow(dead_code)]
-fn make_pool_view_with_metrics(n: usize, rtts: &[Option<u64>], active: &[u32]) -> PoolView<'static> {
-    let metrics = rtts.iter().zip(active.iter().chain(std::iter::repeat(&0))).map(|(rtt, &active)| TunnelMetrics {
-        rtt: rtt.map(Duration::from_millis),
-        active_connections: active,
-        recent_errors: 0,
-        total_dials: 0,
-        total_errors: 0,
-    }).collect::<Vec<_>>();
+fn make_pool_view_with_metrics(
+    n: usize,
+    rtts: &[Option<u64>],
+    active: &[u32],
+) -> PoolView<'static> {
+    let metrics = rtts
+        .iter()
+        .zip(active.iter().chain(std::iter::repeat(&0)))
+        .map(|(rtt, &active)| TunnelMetrics {
+            rtt: rtt.map(Duration::from_millis),
+            active_connections: active,
+            recent_errors: 0,
+            total_dials: 0,
+            total_errors: 0,
+        })
+        .collect::<Vec<_>>();
     let addr = format!("host{}.example.com:443", n);
     PoolView {
         dial_addr: Box::leak(addr.into_boxed_str()),

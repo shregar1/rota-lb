@@ -1,17 +1,17 @@
 //! More tests for the factory module.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::Duration;
 use async_trait::async_trait;
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::error::Error;
+use rota_lb::strategies::round_robin;
+use rota_lb::strategy::TunnelMetrics;
+use rota_lb::BackendFactory;
+use rota_lb::BackendOutput;
+use rota_lb::LoadBalancer;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::duplex;
-use rota::backend::{Backend, Connection};
-use rota::error::Error;
-use rota::BackendFactory;
-use rota::BackendOutput;
-use rota::strategy::TunnelMetrics;
-use rota::strategies::round_robin;
-use rota::LoadBalancer;
 
 struct CountingFactory {
     name: String,
@@ -46,7 +46,9 @@ struct MockBackend {
 
 impl MockBackend {
     fn new(name: &str) -> Self {
-        Self { name: name.to_string() }
+        Self {
+            name: name.to_string(),
+        }
     }
 }
 
@@ -82,13 +84,11 @@ async fn factory_called_once_per_backend() {
 
 #[tokio::test]
 async fn factory_initial_metrics_used() {
-    let factories: Vec<Box<dyn BackendFactory>> = vec![
-        Box::new(CountingFactory {
-            name: "a".into(),
-            counter: Arc::new(AtomicU32::new(0)),
-            fail: false,
-        }),
-    ];
+    let factories: Vec<Box<dyn BackendFactory>> = vec![Box::new(CountingFactory {
+        name: "a".into(),
+        counter: Arc::new(AtomicU32::new(0)),
+        fail: false,
+    })];
     let lb = LoadBalancer::from_factories(factories, round_robin())
         .await
         .unwrap();
@@ -131,13 +131,11 @@ async fn factory_creation_with_zero_backends() {
 
 #[tokio::test]
 async fn factory_creation_with_one_backend() {
-    let factories: Vec<Box<dyn BackendFactory>> = vec![
-        Box::new(CountingFactory {
-            name: "only".into(),
-            counter: Arc::new(AtomicU32::new(0)),
-            fail: false,
-        }),
-    ];
+    let factories: Vec<Box<dyn BackendFactory>> = vec![Box::new(CountingFactory {
+        name: "only".into(),
+        counter: Arc::new(AtomicU32::new(0)),
+        fail: false,
+    })];
     let lb = LoadBalancer::from_factories(factories, round_robin())
         .await
         .unwrap();

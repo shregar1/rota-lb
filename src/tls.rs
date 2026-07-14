@@ -10,9 +10,9 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use async_trait::async_trait;
-use rustls::pki_types::{CertificateDer, IpAddr, PrivateKeyDer, ServerName, UnixTime};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::client::WebPkiServerVerifier;
+use rustls::pki_types::{CertificateDer, IpAddr, PrivateKeyDer, ServerName, UnixTime};
 use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_rustls::TlsConnector;
@@ -47,10 +47,7 @@ impl TlsConfig {
             client_cert: None,
             verify_hostname: true,
             connect_timeout: None,
-            alpn_protocols: DEFAULT_ALPN_PROTOCOLS
-                .iter()
-                .map(|p| p.to_vec())
-                .collect(),
+            alpn_protocols: DEFAULT_ALPN_PROTOCOLS.iter().map(|p| p.to_vec()).collect(),
         }
     }
 
@@ -104,17 +101,17 @@ impl TlsConfig {
 
         if let Some(ref certs) = self.root_certs {
             for cert in certs {
-                root_store.add(cert.clone()).map_err(|e| {
-                    Error::Backend(format!("failed to add root cert: {e}"))
-                })?;
+                root_store
+                    .add(cert.clone())
+                    .map_err(|e| Error::Backend(format!("failed to add root cert: {e}")))?;
             }
         } else {
             let certs = rustls_native_certs::load_native_certs()
                 .map_err(|e| Error::Backend(format!("failed to load native certs: {e}")))?;
             for cert in certs {
-                root_store.add(cert).map_err(|e| {
-                    Error::Backend(format!("failed to add root cert: {e}"))
-                })?;
+                root_store
+                    .add(cert)
+                    .map_err(|e| Error::Backend(format!("failed to add root cert: {e}")))?;
             }
         }
 
@@ -149,7 +146,7 @@ impl TlsConfig {
 /// Wraps a verifier but skips the hostname check by substituting a fixed IP.
 ///
 /// Certificate chain validation is still performed — only the hostname
-    /// match is bypassed. This is the correct behaviour for `danger_bypass_hostname_check_only`.
+/// match is bypassed. This is the correct behaviour for `danger_bypass_hostname_check_only`.
 #[derive(Debug)]
 struct NoHostnameVerifier(Arc<WebPkiServerVerifier>);
 
@@ -163,7 +160,8 @@ impl ServerCertVerifier for NoHostnameVerifier {
         now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
         let any_name = ServerName::IpAddress(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED.into()));
-        self.0.verify_server_cert(end_entity, intermediates, &any_name, ocsp, now)
+        self.0
+            .verify_server_cert(end_entity, intermediates, &any_name, ocsp, now)
     }
 
     fn verify_tls12_signature(

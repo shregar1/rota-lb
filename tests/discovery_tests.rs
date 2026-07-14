@@ -2,16 +2,15 @@
 
 #![cfg(feature = "discovery")]
 
+use async_trait::async_trait;
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::discovery::{
+    BackendDescriptor, BackendFactoryFromDescriptor, Discover, ServiceDiscovery, StaticDiscovery,
+};
+use rota_lb::error::Error;
+use rota_lb::{round_robin, LoadBalancer};
 use std::collections::HashMap;
 use std::time::Duration;
-use async_trait::async_trait;
-use rota::backend::{Backend, Connection};
-use rota::discovery::{
-    BackendDescriptor, BackendFactoryFromDescriptor, Discover, ServiceDiscovery,
-    StaticDiscovery,
-};
-use rota::error::Error;
-use rota::{LoadBalancer, round_robin};
 
 #[allow(dead_code)]
 struct MockDiscovery {
@@ -54,7 +53,10 @@ fn make_desc(id: &str, addr: &str) -> BackendDescriptor {
 
 #[tokio::test]
 async fn static_discovery_basic() {
-    let backends = vec![make_desc("a", "localhost:8001"), make_desc("b", "localhost:8002")];
+    let backends = vec![
+        make_desc("a", "localhost:8001"),
+        make_desc("b", "localhost:8002"),
+    ];
     let discovery = StaticDiscovery::new(backends);
     let result = discovery.discover().await.unwrap();
     assert_eq!(result.len(), 2);
@@ -109,7 +111,10 @@ fn backend_descriptor_with_weight() {
 #[test]
 fn backend_descriptor_with_health_check() {
     let desc = BackendDescriptor::new("id1", "addr1").with_health_check("http://localhost/health");
-    assert_eq!(desc.health_check, Some("http://localhost/health".to_string()));
+    assert_eq!(
+        desc.health_check,
+        Some("http://localhost/health".to_string())
+    );
 }
 
 #[test]

@@ -1,21 +1,20 @@
 //! More in-depth balancer tests to improve coverage.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::io::duplex;
 
-use rota::backend::{Backend, Connection};
-use rota::error::Error;
-use rota::strategy::TunnelMetrics;
-use rota::strategies::{
-    round_robin, lowest_rtt, failover, health_weighted, sticky, hash_by_addr,
-    weighted_round_robin,
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::error::Error;
+use rota_lb::retry::{ExponentialBackoff, FixedRetry, NoRetry};
+use rota_lb::strategies::{
+    failover, hash_by_addr, health_weighted, lowest_rtt, round_robin, sticky, weighted_round_robin,
 };
-use rota::retry::{ExponentialBackoff, FixedRetry, NoRetry};
-use rota::LoadBalancer;
+use rota_lb::strategy::TunnelMetrics;
+use rota_lb::LoadBalancer;
 
 struct DeepMockBackend {
     name: String,
@@ -116,7 +115,7 @@ async fn dial_resets_recent_errors_on_success() {
     assert!(metrics_before[0].recent_errors > 0);
     // Manually reset fail_count to 0
     lb.metrics().await; // Ensure metrics are synced
-    // Second dial - fail_count is now 0 so it should succeed
+                        // Second dial - fail_count is now 0 so it should succeed
     let r = lb.dial("a:80").await;
     assert!(r.is_ok());
     let metrics_after = lb.metrics().await;
@@ -321,7 +320,8 @@ async fn balancer_with_health_weighted() {
             ..Default::default()
         },
     ];
-    let lb = LoadBalancer::new_with_metrics(backends, metrics, health_weighted(), None, None).unwrap();
+    let lb =
+        LoadBalancer::new_with_metrics(backends, metrics, health_weighted(), None, None).unwrap();
     let r = lb.dial("a:80").await;
     assert!(r.is_ok());
 }
@@ -368,7 +368,8 @@ async fn balancer_with_weighted_round_robin() {
             ..Default::default()
         },
     ];
-    let lb = LoadBalancer::new_with_metrics(backends, metrics, weighted_round_robin(), None, None).unwrap();
+    let lb = LoadBalancer::new_with_metrics(backends, metrics, weighted_round_robin(), None, None)
+        .unwrap();
     let r = lb.dial("a:80").await;
     assert!(r.is_ok());
 }

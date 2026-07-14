@@ -52,7 +52,10 @@ pub struct FixedRetry {
 impl FixedRetry {
     /// Create a new fixed retry policy.
     pub const fn new(delay: Duration) -> Self {
-        Self { delay, max_attempts: None }
+        Self {
+            delay,
+            max_attempts: None,
+        }
     }
 
     /// Set the maximum number of attempts.
@@ -137,7 +140,8 @@ impl RetryPolicy for ExponentialBackoff {
             }
         }
 
-        let raw_delay = self.base_delay.as_secs_f64() * self.multiplier.powi(i32::try_from(attempt).unwrap_or(0));
+        let raw_delay = self.base_delay.as_secs_f64()
+            * self.multiplier.powi(i32::try_from(attempt).unwrap_or(0));
         if raw_delay.is_infinite() || raw_delay.is_nan() {
             return Some(self.max_delay);
         }
@@ -146,7 +150,9 @@ impl RetryPolicy for ExponentialBackoff {
 
         if self.jitter {
             let jitter = rand::random::<f64>();
-            Some(Duration::from_secs_f64(jitter.mul_add(JITTER_FACTOR, JITTER_FACTOR) * delay_secs))
+            Some(Duration::from_secs_f64(
+                jitter.mul_add(JITTER_FACTOR, JITTER_FACTOR) * delay_secs,
+            ))
         } else {
             Some(delay)
         }
@@ -171,7 +177,10 @@ impl std::fmt::Debug for RetryOnError {
 
 impl RetryOnError {
     /// Create a new conditional retry policy.
-    pub fn new(inner: impl RetryPolicy + 'static, predicate: impl Fn(&Error) -> bool + Send + Sync + 'static) -> Self {
+    pub fn new(
+        inner: impl RetryPolicy + 'static,
+        predicate: impl Fn(&Error) -> bool + Send + Sync + 'static,
+    ) -> Self {
         Self {
             inner: Box::new(inner),
             predicate: Box::new(predicate),

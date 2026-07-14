@@ -26,9 +26,12 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::constants::STRATEGY_NAMES;
+use crate::strategies::{
+    Failover, HashByAddr, HealthWeighted, LeastConnections, LowestRtt, Random, RoundRobin, Sticky,
+    WeightedRoundRobin,
+};
 use crate::strategy::TunnelMetrics;
 use crate::strategy::{BalanceStrategy, PoolView};
-use crate::strategies::{Failover, HashByAddr, HealthWeighted, LeastConnections, LowestRtt, Random, RoundRobin, Sticky, WeightedRoundRobin};
 
 // ============================================================================
 //  Canonical strategy enum — single source of truth for variant mapping
@@ -117,7 +120,7 @@ pub struct RotaVersion {
 #[derive(Clone, Copy)]
 #[repr(C)]
 struct FfiMetric {
-    rtt_us: u64,               // 0 = unknown
+    rtt_us: u64, // 0 = unknown
     active_connections: u32,
     recent_errors: u32,
     total_dials: u64,
@@ -223,10 +226,7 @@ pub unsafe extern "C" fn rota_lb_version(out: *mut RotaVersion) -> i32 {
 ///
 /// `strategy_kind` — see [`FfiStrategy`] for valid discriminants.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rota_lb_create(
-    n: u32,
-    strategy_kind: i32,
-) -> *mut FfiLoadBalancer {
+pub unsafe extern "C" fn rota_lb_create(n: u32, strategy_kind: i32) -> *mut FfiLoadBalancer {
     catch_panic!(
         {
             if n == 0 {
@@ -237,7 +237,7 @@ pub unsafe extern "C" fn rota_lb_create(
                 tracing::warn!(strategy_kind, "rota_lb_create: unknown strategy");
                 return std::ptr::null_mut();
             };
-let strategy = kind.build(n as usize);
+            let strategy = kind.build(n as usize);
             Box::into_raw(Box::new(FfiLoadBalancer {
                 strategy: Mutex::new(strategy),
                 backend_count: n as usize,
@@ -283,12 +283,7 @@ pub unsafe extern "C" fn rota_lb_select(
         tracing::warn!("rota_lb_select: null argument(s)");
         return u32::MAX;
     }
-    catch_panic!(
-        {
-            select_impl(&*lb, dial_addr, metrics, n)
-        },
-        u32::MAX
-    )
+    catch_panic!({ select_impl(&*lb, dial_addr, metrics, n) }, u32::MAX)
 }
 
 #[allow(clippy::significant_drop_tightening)]
@@ -304,7 +299,11 @@ unsafe fn select_impl(
     };
     let count = n as usize;
     if count == 0 || count != lb.backend_count {
-        tracing::warn!(count, expected = lb.backend_count, "rota_lb_select: metric count mismatch");
+        tracing::warn!(
+            count,
+            expected = lb.backend_count,
+            "rota_lb_select: metric count mismatch"
+        );
         return u32::MAX;
     }
     let ffi_slice = unsafe { std::slice::from_raw_parts(metrics, count) };
@@ -332,10 +331,7 @@ unsafe fn select_impl(
 
 /// Report a dial error. Rotates failover primary, updates health scores, etc.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rota_lb_report_error(
-    lb: *mut FfiLoadBalancer,
-    idx: u32,
-) {
+pub unsafe extern "C" fn rota_lb_report_error(lb: *mut FfiLoadBalancer, idx: u32) {
     catch_panic!(
         {
             if lb.is_null() {
@@ -357,10 +353,7 @@ pub unsafe extern "C" fn rota_lb_report_error(
 /// (the default impl). Lets `Sticky` and custom strategies get positive
 /// confirmation.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rota_lb_report_success(
-    lb: *mut FfiLoadBalancer,
-    idx: u32,
-) {
+pub unsafe extern "C" fn rota_lb_report_success(lb: *mut FfiLoadBalancer, idx: u32) {
     catch_panic!(
         {
             if lb.is_null() {
@@ -424,10 +417,7 @@ pub unsafe extern "C" fn rota_lb_strategy_name(
 /// # Returns
 /// 0 on success, -1 on invalid arguments.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rota_lb_metrics(
-    lb: *mut FfiLoadBalancer,
-    out: *mut FfiMetric,
-) -> i32 {
+pub unsafe extern "C" fn rota_lb_metrics(lb: *mut FfiLoadBalancer, out: *mut FfiMetric) -> i32 {
     catch_panic!(
         {
             if lb.is_null() || out.is_null() {
@@ -464,7 +454,9 @@ pub unsafe extern "C" fn rota_lb_metrics(
                         // years of duration, but we want the cast to be
                         // explicit so a future refactor doesn't accidentally
                         // wrap on a real-world RTT.
-                        rtt_us: m.rtt.map_or(0, |d| d.as_micros().try_into().unwrap_or(u64::MAX)),
+                        rtt_us: m
+                            .rtt
+                            .map_or(0, |d| d.as_micros().try_into().unwrap_or(u64::MAX)),
                         active_connections: m.active_connections,
                         recent_errors: m.recent_errors,
                         total_dials: m.total_dials,
@@ -492,10 +484,7 @@ pub unsafe extern "C" fn rota_lb_metrics(
 /// # Returns
 /// 0 on success, -1 if lb is null or `strategy_kind` is unknown.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rota_lb_set_strategy(
-    lb: *mut FfiLoadBalancer,
-    strategy_kind: i32,
-) -> i32 {
+pub unsafe extern "C" fn rota_lb_set_strategy(lb: *mut FfiLoadBalancer, strategy_kind: i32) -> i32 {
     catch_panic!(
         {
             if lb.is_null() {
@@ -503,10 +492,7 @@ pub unsafe extern "C" fn rota_lb_set_strategy(
                 return -1;
             }
             let Some(kind) = FfiStrategy::from_i32(strategy_kind) else {
-                tracing::warn!(
-                    strategy_kind,
-                    "rota_lb_set_strategy: unknown strategy",
-                );
+                tracing::warn!(strategy_kind, "rota_lb_set_strategy: unknown strategy",);
                 return -1;
             };
             let lb = &mut *lb;
@@ -568,11 +554,20 @@ pub unsafe extern "C" fn rota_lb_reset(lb: *mut FfiLoadBalancer) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use std::mem::size_of;
     use super::*;
+    use std::mem::size_of;
 
     fn make_metrics(n: u32) -> Vec<FfiMetric> {
-        vec![FfiMetric { rtt_us: 0, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 }; n as usize]
+        vec![
+            FfiMetric {
+                rtt_us: 0,
+                active_connections: 0,
+                recent_errors: 0,
+                total_dials: 0,
+                total_errors: 0
+            };
+            n as usize
+        ]
     }
 
     #[test]
@@ -608,7 +603,13 @@ mod tests {
     #[test]
     fn select_null_returns_max() {
         let addr = CString::new("x:1").unwrap();
-        let m = FfiMetric { rtt_us: 0, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 };
+        let m = FfiMetric {
+            rtt_us: 0,
+            active_connections: 0,
+            recent_errors: 0,
+            total_dials: 0,
+            total_errors: 0,
+        };
         unsafe {
             assert_eq!(
                 rota_lb_select(std::ptr::null_mut(), addr.as_ptr(), &m, 1),
@@ -640,7 +641,12 @@ mod tests {
 
     #[test]
     fn version_returns_expected_sizes() {
-        let mut v = RotaVersion { major: 0, minor: 0, patch: 0, metric_struct_size: 0 };
+        let mut v = RotaVersion {
+            major: 0,
+            minor: 0,
+            patch: 0,
+            metric_struct_size: 0,
+        };
         let rc = unsafe { rota_lb_version(&mut v) };
         assert_eq!(rc, 0);
         assert_eq!(v.metric_struct_size, 32);
@@ -655,7 +661,13 @@ mod tests {
 
     #[test]
     fn ffi_to_tunnel_roundtrip() {
-        let ffi = FfiMetric { rtt_us: 50_000, active_connections: 3, recent_errors: 1, total_dials: 10, total_errors: 2 };
+        let ffi = FfiMetric {
+            rtt_us: 50_000,
+            active_connections: 3,
+            recent_errors: 1,
+            total_dials: 10,
+            total_errors: 2,
+        };
         let tunnel = ffi_to_tunnel(&ffi);
         assert_eq!(tunnel.rtt, Some(Duration::from_millis(50)));
         assert_eq!(tunnel.active_connections, 3);
@@ -666,7 +678,13 @@ mod tests {
 
     #[test]
     fn ffi_to_tunnel_zero_rtt_is_none() {
-        let ffi = FfiMetric { rtt_us: 0, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 };
+        let ffi = FfiMetric {
+            rtt_us: 0,
+            active_connections: 0,
+            recent_errors: 0,
+            total_dials: 0,
+            total_errors: 0,
+        };
         let tunnel = ffi_to_tunnel(&ffi);
         assert!(tunnel.rtt.is_none());
     }
@@ -704,8 +722,20 @@ mod tests {
         let lb = unsafe { rota_lb_create(2, 7) };
         assert!(!lb.is_null());
         let metrics = [
-            FfiMetric { rtt_us: 100_000, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 },
-            FfiMetric { rtt_us: 10_000, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 },
+            FfiMetric {
+                rtt_us: 100_000,
+                active_connections: 0,
+                recent_errors: 0,
+                total_dials: 0,
+                total_errors: 0,
+            },
+            FfiMetric {
+                rtt_us: 10_000,
+                active_connections: 0,
+                recent_errors: 0,
+                total_dials: 0,
+                total_errors: 0,
+            },
         ];
         let addr = CString::new("x:1").unwrap();
         unsafe {
@@ -718,7 +748,13 @@ mod tests {
     fn random_picks_in_range_via_ffi() {
         let lb = unsafe { rota_lb_create(5, 1) };
         assert!(!lb.is_null());
-        let metrics = [FfiMetric { rtt_us: 0, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 }; 5];
+        let metrics = [FfiMetric {
+            rtt_us: 0,
+            active_connections: 0,
+            recent_errors: 0,
+            total_dials: 0,
+            total_errors: 0,
+        }; 5];
         let addr = CString::new("x:1").unwrap();
         unsafe {
             for _ in 0..20 {
@@ -734,10 +770,34 @@ mod tests {
         let lb = unsafe { rota_lb_create(4, 8) };
         assert!(!lb.is_null());
         let metrics = [
-            FfiMetric { rtt_us: 50_000, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 },
-            FfiMetric { rtt_us: 10_000, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 },
-            FfiMetric { rtt_us: 200_000, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 },
-            FfiMetric { rtt_us: 100_000, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 },
+            FfiMetric {
+                rtt_us: 50_000,
+                active_connections: 0,
+                recent_errors: 0,
+                total_dials: 0,
+                total_errors: 0,
+            },
+            FfiMetric {
+                rtt_us: 10_000,
+                active_connections: 0,
+                recent_errors: 0,
+                total_dials: 0,
+                total_errors: 0,
+            },
+            FfiMetric {
+                rtt_us: 200_000,
+                active_connections: 0,
+                recent_errors: 0,
+                total_dials: 0,
+                total_errors: 0,
+            },
+            FfiMetric {
+                rtt_us: 100_000,
+                active_connections: 0,
+                recent_errors: 0,
+                total_dials: 0,
+                total_errors: 0,
+            },
         ];
         let addr = CString::new("x:1").unwrap();
         unsafe {
@@ -754,7 +814,13 @@ mod tests {
     fn report_success_does_not_panic() {
         let lb = unsafe { rota_lb_create(3, 0) };
         assert!(!lb.is_null());
-        let metrics = [FfiMetric { rtt_us: 0, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 }; 3];
+        let metrics = [FfiMetric {
+            rtt_us: 0,
+            active_connections: 0,
+            recent_errors: 0,
+            total_dials: 0,
+            total_errors: 0,
+        }; 3];
         let addr = CString::new("x:1").unwrap();
         unsafe {
             let idx = rota_lb_select(lb, addr.as_ptr(), metrics.as_ptr(), 3);
@@ -777,7 +843,13 @@ mod tests {
         // Vec doesn't drift or accumulate state between calls.
         let lb = unsafe { rota_lb_create(4, 0) };
         assert!(!lb.is_null());
-        let metrics = [FfiMetric { rtt_us: 1000, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 }; 4];
+        let metrics = [FfiMetric {
+            rtt_us: 1000,
+            active_connections: 0,
+            recent_errors: 0,
+            total_dials: 0,
+            total_errors: 0,
+        }; 4];
         let addr = CString::new("x:1").unwrap();
         unsafe {
             let mut prev = u32::MAX;
@@ -800,14 +872,38 @@ mod tests {
         let lb = unsafe { rota_lb_create(3, 0) };
         assert!(!lb.is_null());
         let input = [
-            FfiMetric { rtt_us: 1000, active_connections: 5, recent_errors: 0, total_dials: 10, total_errors: 0 },
-            FfiMetric { rtt_us: 2000, active_connections: 6, recent_errors: 0, total_dials: 20, total_errors: 0 },
-            FfiMetric { rtt_us: 3000, active_connections: 7, recent_errors: 0, total_dials: 30, total_errors: 0 },
+            FfiMetric {
+                rtt_us: 1000,
+                active_connections: 5,
+                recent_errors: 0,
+                total_dials: 10,
+                total_errors: 0,
+            },
+            FfiMetric {
+                rtt_us: 2000,
+                active_connections: 6,
+                recent_errors: 0,
+                total_dials: 20,
+                total_errors: 0,
+            },
+            FfiMetric {
+                rtt_us: 3000,
+                active_connections: 7,
+                recent_errors: 0,
+                total_dials: 30,
+                total_errors: 0,
+            },
         ];
         let addr = CString::new("x:1").unwrap();
         unsafe {
             rota_lb_select(lb, addr.as_ptr(), input.as_ptr(), 3);
-            let mut output = [FfiMetric { rtt_us: 0, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 }; 3];
+            let mut output = [FfiMetric {
+                rtt_us: 0,
+                active_connections: 0,
+                recent_errors: 0,
+                total_dials: 0,
+                total_errors: 0,
+            }; 3];
             let rc = rota_lb_metrics(lb, output.as_mut_ptr());
             assert_eq!(rc, 0);
             for i in 0..3 {
@@ -824,7 +920,13 @@ mod tests {
         let lb = unsafe { rota_lb_create(2, 0) };
         // lb starts with empty scratch buffer; reading before any select
         // should yield zeroed metrics.
-        let mut output = [FfiMetric { rtt_us: 99, active_connections: 99, recent_errors: 99, total_dials: 99, total_errors: 99 }; 2];
+        let mut output = [FfiMetric {
+            rtt_us: 99,
+            active_connections: 99,
+            recent_errors: 99,
+            total_dials: 99,
+            total_errors: 99,
+        }; 2];
         unsafe {
             let rc = rota_lb_metrics(lb, output.as_mut_ptr());
             assert_eq!(rc, 0);
@@ -836,7 +938,13 @@ mod tests {
 
     #[test]
     fn metrics_readback_null_args_return_minus_one() {
-        let m = FfiMetric { rtt_us: 0, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 };
+        let m = FfiMetric {
+            rtt_us: 0,
+            active_connections: 0,
+            recent_errors: 0,
+            total_dials: 0,
+            total_errors: 0,
+        };
         let m_ref: *const FfiMetric = &m;
         let m_ptr: *mut FfiMetric = m_ref as usize as *mut FfiMetric;
         unsafe {
@@ -853,7 +961,13 @@ mod tests {
         // behaviour must reflect the new strategy.
         let lb = unsafe { rota_lb_create(2, 0) }; // 0 = RoundRobin
         assert!(!lb.is_null());
-        let metrics = [FfiMetric { rtt_us: 0, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 }; 2];
+        let metrics = [FfiMetric {
+            rtt_us: 0,
+            active_connections: 0,
+            recent_errors: 0,
+            total_dials: 0,
+            total_errors: 0,
+        }; 2];
         let addr = CString::new("x:1").unwrap();
         unsafe {
             // Pre-swap: round-robin walks 0, 1, 0, 1.
@@ -898,7 +1012,13 @@ mod tests {
     fn reset_clears_failover_primary() {
         let lb = unsafe { rota_lb_create(3, 6) }; // Failover
         assert!(!lb.is_null());
-        let metrics = [FfiMetric { rtt_us: 0, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 }; 3];
+        let metrics = [FfiMetric {
+            rtt_us: 0,
+            active_connections: 0,
+            recent_errors: 0,
+            total_dials: 0,
+            total_errors: 0,
+        }; 3];
         let addr = CString::new("x:1").unwrap();
         unsafe {
             // Initial select primes Failover.len and returns primary 0.
@@ -919,7 +1039,13 @@ mod tests {
     #[test]
     fn reset_resets_round_robin_cursor() {
         let lb = unsafe { rota_lb_create(3, 0) }; // RoundRobin
-        let metrics = [FfiMetric { rtt_us: 0, active_connections: 0, recent_errors: 0, total_dials: 0, total_errors: 0 }; 3];
+        let metrics = [FfiMetric {
+            rtt_us: 0,
+            active_connections: 0,
+            recent_errors: 0,
+            total_dials: 0,
+            total_errors: 0,
+        }; 3];
         let addr = CString::new("x:1").unwrap();
         unsafe {
             // Walk to position 2.

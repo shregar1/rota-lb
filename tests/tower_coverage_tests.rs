@@ -2,17 +2,17 @@
 
 #![cfg(feature = "tower")]
 
-use std::time::Duration;
 use async_trait::async_trait;
-use tokio::io::duplex;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::io::duplex;
 
-use rota::backend::{Backend, Connection};
-use rota::error::Error;
-use rota::tower::LbRequest;
-use rota::retry::ExponentialBackoff;
-use rota::strategies::round_robin;
-use rota::LoadBalancer;
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::error::Error;
+use rota_lb::retry::ExponentialBackoff;
+use rota_lb::strategies::round_robin;
+use rota_lb::tower::LbRequest;
+use rota_lb::LoadBalancer;
 use tower::Service;
 
 struct TowerTestBackend;
@@ -100,6 +100,7 @@ async fn lb_request_poll_ready_check() {
     let mut svc = lb.clone();
     let result = std::future::poll_fn(|cx| {
         <Arc<LoadBalancer> as Service<LbRequest>>::poll_ready(&mut svc, cx)
-    }).await;
+    })
+    .await;
     assert!(result.is_ok());
 }

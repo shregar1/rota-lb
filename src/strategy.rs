@@ -97,7 +97,7 @@ impl BalanceStrategy for Box<dyn BalanceStrategy> {
     fn name(&self) -> &str {
         (**self).name()
     }
-fn report_error(&mut self, idx: usize) {
+    fn report_error(&mut self, idx: usize) {
         (**self).report_error(idx);
     }
 

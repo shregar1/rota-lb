@@ -1,11 +1,11 @@
 //! More tests for the retry module to improve coverage.
 
-use std::time::Duration;
-use rota::error::Error;
-use rota::retry::{
-    ExponentialBackoff, FixedRetry, NoRetry, RetryOnError, RetryPolicy, RetryPolicyBuilder,
-    is_transient_error,
+use rota_lb::error::Error;
+use rota_lb::retry::{
+    is_transient_error, ExponentialBackoff, FixedRetry, NoRetry, RetryOnError, RetryPolicy,
+    RetryPolicyBuilder,
 };
+use std::time::Duration;
 
 #[test]
 fn no_retry_clone() {
@@ -33,7 +33,10 @@ fn no_retry_debug() {
 fn fixed_retry_clone() {
     let p = FixedRetry::new(Duration::from_millis(100));
     let p2 = p.clone();
-    assert_eq!(p.should_retry(1, &Error::Backend("test".into())), p2.should_retry(1, &Error::Backend("test".into())));
+    assert_eq!(
+        p.should_retry(1, &Error::Backend("test".into())),
+        p2.should_retry(1, &Error::Backend("test".into()))
+    );
 }
 
 #[test]
@@ -105,8 +108,8 @@ fn exponential_backoff_default_max_delay() {
 
 #[test]
 fn exponential_backoff_custom_max_delay() {
-    let _p = ExponentialBackoff::new(Duration::from_millis(100))
-        .with_max_delay(Duration::from_secs(60));
+    let _p =
+        ExponentialBackoff::new(Duration::from_millis(100)).with_max_delay(Duration::from_secs(60));
     // max_delay is private - we test it indirectly via should_retry
 }
 
@@ -118,8 +121,7 @@ fn exponential_backoff_default_multiplier() {
 
 #[test]
 fn exponential_backoff_custom_multiplier() {
-    let _p = ExponentialBackoff::new(Duration::from_millis(100))
-        .with_multiplier(3.0);
+    let _p = ExponentialBackoff::new(Duration::from_millis(100)).with_multiplier(3.0);
     // multiplier is private - we test it indirectly via should_retry
 }
 
@@ -165,27 +167,18 @@ fn exponential_backoff_respects_max_delay_v2() {
 fn retry_on_error_clone() {
     // RetryOnError doesn't implement Clone because the inner Box<dyn RetryPolicy> can't be cloned
     // We just test that the struct is constructed
-    let _p = RetryOnError::new(
-        FixedRetry::new(Duration::from_millis(100)),
-        |_| true,
-    );
+    let _p = RetryOnError::new(FixedRetry::new(Duration::from_millis(100)), |_| true);
 }
 
 #[test]
 fn retry_on_error_debug() {
-    let p = RetryOnError::new(
-        FixedRetry::new(Duration::from_millis(100)),
-        |_| true,
-    );
+    let p = RetryOnError::new(FixedRetry::new(Duration::from_millis(100)), |_| true);
     let _ = format!("{:?}", p);
 }
 
 #[test]
 fn retry_on_error_total_timeout_delegates() {
-    let p = RetryOnError::new(
-        FixedRetry::new(Duration::from_millis(100)),
-        |_| true,
-    );
+    let p = RetryOnError::new(FixedRetry::new(Duration::from_millis(100)), |_| true);
     assert_eq!(p.total_timeout(), None);
 }
 
@@ -200,10 +193,7 @@ fn retry_on_error_max_attempts_delegates() {
 
 #[test]
 fn retry_on_error_no_retry_on_predicate_false() {
-    let p = RetryOnError::new(
-        FixedRetry::new(Duration::from_millis(100)),
-        |_| false,
-    );
+    let p = RetryOnError::new(FixedRetry::new(Duration::from_millis(100)), |_| false);
     assert!(p.should_retry(1, &Error::Backend("test".into())).is_none());
 }
 

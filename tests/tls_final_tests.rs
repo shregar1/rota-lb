@@ -2,34 +2,31 @@
 
 #![cfg(feature = "tls")]
 
+use rota_lb::tls::TlsConfig;
 use std::time::Duration;
-use rota::tls::TlsConfig;
 
 #[test]
 fn tls_config_with_connect_timeout_zero() {
-    let config = TlsConfig::new("test")
-        .with_connect_timeout(Duration::from_millis(0));
+    let config = TlsConfig::new("test").with_connect_timeout(Duration::from_millis(0));
     assert_eq!(config.connect_timeout, Some(Duration::from_millis(0)));
 }
 
 #[test]
 fn tls_config_with_connect_timeout_max() {
-    let config = TlsConfig::new("test")
-        .with_connect_timeout(Duration::from_secs(3600));
+    let config = TlsConfig::new("test").with_connect_timeout(Duration::from_secs(3600));
     assert_eq!(config.connect_timeout, Some(Duration::from_secs(3600)));
 }
 
 #[test]
 fn tls_config_with_all_alpn() {
-    let config = TlsConfig::new("test")
-        .with_alpn_protocols(vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
+    let config =
+        TlsConfig::new("test").with_alpn_protocols(vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
     assert_eq!(config.alpn_protocols.len(), 2);
 }
 
 #[test]
 fn tls_config_with_empty_alpn() {
-    let config = TlsConfig::new("test")
-        .with_alpn_protocols(vec![]);
+    let config = TlsConfig::new("test").with_alpn_protocols(vec![]);
     assert!(config.alpn_protocols.is_empty());
 }
 
@@ -59,8 +56,7 @@ fn tls_config_with_ipv6_server_name() {
 
 #[test]
 fn tls_config_bypass_hostname() {
-    let config = TlsConfig::new("test")
-        .danger_bypass_hostname_check_only();
+    let config = TlsConfig::new("test").danger_bypass_hostname_check_only();
     assert!(!config.verify_hostname);
 }
 
@@ -156,7 +152,7 @@ fn tls_config_build_various_options() {
 
 #[test]
 fn tls_error_display_variants() {
-    use rota::tls::TlsError;
+    use rota_lb::tls::TlsError;
 
     let e1 = TlsError::InvalidServerName("test1".to_string());
     assert!(format!("{}", e1).contains("test1"));
@@ -167,7 +163,7 @@ fn tls_error_display_variants() {
 
 #[test]
 fn tls_error_display_long() {
-    use rota::tls::TlsError;
+    use rota_lb::tls::TlsError;
     let long_msg = "a".repeat(1000);
     let e = TlsError::InvalidServerName(long_msg.clone());
     assert!(format!("{}", e).contains(&long_msg));
@@ -175,9 +171,9 @@ fn tls_error_display_long() {
 
 #[test]
 fn tls_error_io_with_message() {
-    use rota::tls::TlsError;
+    use rota_lb::tls::TlsError;
     use std::io;
-    let io_err = io::Error::new(io::ErrorKind::Other, "test io error");
+    let io_err = io::Error::other("test io error");
     let tls_err: TlsError = io_err.into();
     let display = format!("{}", tls_err);
     assert!(display.contains("test io error"));
@@ -185,7 +181,7 @@ fn tls_error_io_with_message() {
 
 #[test]
 fn tls_error_with_special_chars() {
-    use rota::tls::TlsError;
+    use rota_lb::tls::TlsError;
     let e = TlsError::InvalidServerName("test with spaces and !@#".to_string());
     let display = format!("{}", e);
     assert!(display.contains("test with spaces"));
@@ -193,7 +189,7 @@ fn tls_error_with_special_chars() {
 
 #[test]
 fn tls_error_unicode() {
-    use rota::tls::TlsError;
+    use rota_lb::tls::TlsError;
     let e = TlsError::InvalidServerName("测试".to_string());
     let display = format!("{}", e);
     assert!(display.contains("测试"));
@@ -201,7 +197,7 @@ fn tls_error_unicode() {
 
 #[test]
 fn tls_error_empty_string() {
-    use rota::tls::TlsError;
+    use rota_lb::tls::TlsError;
     let e = TlsError::InvalidServerName("".to_string());
     let display = format!("{}", e);
     // Empty string should still display something
@@ -210,30 +206,30 @@ fn tls_error_empty_string() {
 
 #[test]
 fn tls_error_debug() {
-    use rota::tls::TlsError;
+    use rota_lb::tls::TlsError;
     let e = TlsError::InvalidServerName("test".to_string());
     let _ = format!("{:?}", e);
 }
 
 #[test]
 fn tls_error_io_debug() {
-    use rota::tls::TlsError;
+    use rota_lb::tls::TlsError;
     use std::io;
-    let io_err = io::Error::new(io::ErrorKind::Other, "test");
+    let io_err = io::Error::other("test");
     let tls_err: TlsError = io_err.into();
     let _ = format!("{:?}", tls_err);
 }
 
 #[test]
 fn tls_error_certificate_debug() {
-    use rota::tls::TlsError;
+    use rota_lb::tls::TlsError;
     let e = TlsError::Certificate("test".to_string());
     let _ = format!("{:?}", e);
 }
 
 #[test]
 fn tls_error_from_io_error() {
-    use rota::tls::TlsError;
+    use rota_lb::tls::TlsError;
     use std::io;
     let io_err = io::Error::new(io::ErrorKind::ConnectionReset, "connection reset");
     let tls_err: TlsError = io_err.into();

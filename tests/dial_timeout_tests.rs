@@ -1,19 +1,19 @@
 //! Tests for the dial timeout error path.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::io::duplex;
 
-use rota::backend::{Backend, Connection};
-use rota::error::Error;
-use rota::strategy::TunnelMetrics;
-use rota::strategies::round_robin;
-use rota::retry::FixedRetry;
-use rota::LoadBalancer;
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::error::Error;
+use rota_lb::retry::FixedRetry;
+use rota_lb::strategies::round_robin;
+use rota_lb::LoadBalancer;
 
+#[allow(dead_code)]
 struct SlowBackend {
     name: String,
     fail_count: Arc<AtomicU32>,

@@ -1,11 +1,14 @@
 //! Health checking for backends.
 
+use crate::backend::Backend;
+use crate::constants::{
+    DEFAULT_HEALTHY_THRESHOLD, DEFAULT_HEALTH_CHECK_INTERVAL, DEFAULT_HEALTH_CHECK_TIMEOUT,
+    DEFAULT_UNHEALTHY_THRESHOLD,
+};
+use crate::strategy::TunnelMetrics;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
-use crate::constants::{DEFAULT_HEALTH_CHECK_INTERVAL, DEFAULT_HEALTH_CHECK_TIMEOUT, DEFAULT_HEALTHY_THRESHOLD, DEFAULT_UNHEALTHY_THRESHOLD};
-use crate::backend::Backend;
-use crate::strategy::TunnelMetrics;
 
 /// Health state of a backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,16 +68,13 @@ impl HealthChecker {
         let check_addr = config.check_addr.clone();
 
         let task_handle = tokio::spawn(async move {
-            Self::run_loop(
-                backends,
-                metrics,
-                config,
-                check_addr,
-                shutdown_rx,
-            ).await;
+            Self::run_loop(backends, metrics, config, check_addr, shutdown_rx).await;
         });
 
-        Self { shutdown_tx, task_handle }
+        Self {
+            shutdown_tx,
+            task_handle,
+        }
     }
 
     #[allow(clippy::significant_drop_tightening)]
@@ -147,12 +147,10 @@ impl HealthChecker {
 ///
 /// This is automatically done by the `LoadBalancer`'s `dial` method.
 /// Strategies like `HealthWeighted` and `Failover` use these metrics.
-pub fn record_dial_result(
-    metrics: &mut [TunnelMetrics],
-    index: usize,
-    success: bool,
-) {
-    let Some(m) = metrics.get_mut(index) else { return };
+pub fn record_dial_result(metrics: &mut [TunnelMetrics], index: usize, success: bool) {
+    let Some(m) = metrics.get_mut(index) else {
+        return;
+    };
     if success {
         m.recent_errors = 0;
     } else {

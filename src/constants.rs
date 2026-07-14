@@ -69,6 +69,5 @@ pub const STRATEGY_NAMES: &[&str] = &[
 /// `WeightedRoundRobin` weight calculation: `max(1, 1000 / rtt_ms)`
 pub fn calculate_weight(rtt: Duration) -> u32 {
     let ms = u64::try_from(rtt.as_millis()).unwrap_or(0).max(1);
-    u32::try_from((u64::from(MS_PER_SECOND) / ms).max(u64::from(MIN_WEIGHT)))
-        .unwrap_or(MIN_WEIGHT)
+    u32::try_from((u64::from(MS_PER_SECOND) / ms).max(u64::from(MIN_WEIGHT))).unwrap_or(MIN_WEIGHT)
 }

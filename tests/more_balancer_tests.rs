@@ -1,21 +1,21 @@
 //! Additional tests for the LoadBalancer to improve coverage.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::io::duplex;
 
-use rota::backend::{Backend, Connection};
-use rota::error::Error;
-use rota::strategy::TunnelMetrics;
-use rota::strategies::{
-    round_robin, random, lowest_rtt, least_connections, hash_by_addr,
-    weighted_round_robin, failover, health_weighted, sticky,
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::error::Error;
+use rota_lb::retry::{ExponentialBackoff, FixedRetry, NoRetry};
+use rota_lb::strategies::{
+    failover, hash_by_addr, health_weighted, least_connections, lowest_rtt, random, round_robin,
+    sticky, weighted_round_robin,
 };
-use rota::retry::{ExponentialBackoff, FixedRetry, NoRetry};
-use rota::LoadBalancer;
+use rota_lb::strategy::TunnelMetrics;
+use rota_lb::LoadBalancer;
 
 struct MockBackend {
     name: String,
@@ -246,13 +246,13 @@ async fn builder_with_sticky() {
 //  from_factories with various strategies
 // ============================================================================
 
-fn make_factory(name: &'static str) -> Box<dyn rota::BackendFactory> {
+fn make_factory(name: &'static str) -> Box<dyn rota_lb::BackendFactory> {
     struct F(&'static str);
     #[async_trait::async_trait]
-    impl rota::BackendFactory for F {
-        async fn create(&self) -> Result<rota::factory::BackendOutput, Error> {
+    impl rota_lb::BackendFactory for F {
+        async fn create(&self) -> Result<rota_lb::factory::BackendOutput, Error> {
             let _ = duplex(64);
-            Ok(rota::factory::BackendOutput {
+            Ok(rota_lb::factory::BackendOutput {
                 backend: Box::new(MockBackend::new(self.0)),
                 initial_metrics: TunnelMetrics::default(),
             })
@@ -263,56 +263,72 @@ fn make_factory(name: &'static str) -> Box<dyn rota::BackendFactory> {
 
 #[tokio::test]
 async fn from_factories_with_random() {
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![make_factory("a")];
-    let _lb = LoadBalancer::from_factories(factories, random()).await.unwrap();
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![make_factory("a")];
+    let _lb = LoadBalancer::from_factories(factories, random())
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn from_factories_with_lowest_rtt() {
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![make_factory("a")];
-    let _lb = LoadBalancer::from_factories(factories, lowest_rtt()).await.unwrap();
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![make_factory("a")];
+    let _lb = LoadBalancer::from_factories(factories, lowest_rtt())
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn from_factories_with_least_connections() {
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![make_factory("a")];
-    let _lb = LoadBalancer::from_factories(factories, least_connections()).await.unwrap();
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![make_factory("a")];
+    let _lb = LoadBalancer::from_factories(factories, least_connections())
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn from_factories_with_hash_by_addr() {
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![make_factory("a")];
-    let _lb = LoadBalancer::from_factories(factories, hash_by_addr()).await.unwrap();
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![make_factory("a")];
+    let _lb = LoadBalancer::from_factories(factories, hash_by_addr())
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn from_factories_with_weighted_round_robin() {
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![make_factory("a")];
-    let _lb = LoadBalancer::from_factories(factories, weighted_round_robin()).await.unwrap();
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![make_factory("a")];
+    let _lb = LoadBalancer::from_factories(factories, weighted_round_robin())
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn from_factories_with_failover() {
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![make_factory("a")];
-    let _lb = LoadBalancer::from_factories(factories, failover()).await.unwrap();
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![make_factory("a")];
+    let _lb = LoadBalancer::from_factories(factories, failover())
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn from_factories_with_health_weighted() {
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![make_factory("a")];
-    let _lb = LoadBalancer::from_factories(factories, health_weighted()).await.unwrap();
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![make_factory("a")];
+    let _lb = LoadBalancer::from_factories(factories, health_weighted())
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn from_factories_with_sticky() {
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![make_factory("a")];
-    let _lb = LoadBalancer::from_factories(factories, sticky()).await.unwrap();
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![make_factory("a")];
+    let _lb = LoadBalancer::from_factories(factories, sticky())
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn from_factories_with_initial_metrics() {
-    use rota::strategy::TunnelMetrics;
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![make_factory("a")];
+    use rota_lb::strategy::TunnelMetrics;
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![make_factory("a")];
     let metrics = vec![TunnelMetrics {
         rtt: Some(Duration::from_millis(5)),
         ..Default::default()
@@ -328,8 +344,8 @@ async fn from_factories_with_initial_metrics() {
 
 #[tokio::test]
 async fn from_factories_mismatched_metrics() {
-    use rota::strategy::TunnelMetrics;
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![make_factory("a")];
+    use rota_lb::strategy::TunnelMetrics;
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![make_factory("a")];
     let metrics = vec![TunnelMetrics::default(), TunnelMetrics::default()];
     let result = LoadBalancer::builder()
         .factories(factories)
@@ -342,7 +358,7 @@ async fn from_factories_mismatched_metrics() {
 
 #[tokio::test]
 async fn from_factories_empty() {
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![];
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![];
     let result = LoadBalancer::from_factories(factories, round_robin()).await;
     assert!(result.is_err());
 }

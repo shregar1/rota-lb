@@ -1,17 +1,17 @@
 //! Tests for the factory module to improve coverage.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::io::duplex;
 
-use rota::backend::{Backend, Connection};
-use rota::error::Error;
-use rota::strategy::TunnelMetrics;
-use rota::strategies::round_robin;
-use rota::{BackendFactory, BackendOutput, LoadBalancer};
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::error::Error;
+use rota_lb::strategies::round_robin;
+use rota_lb::strategy::TunnelMetrics;
+use rota_lb::{BackendFactory, BackendOutput, LoadBalancer};
 
 struct TestFactory {
     name: String,
@@ -44,7 +44,9 @@ struct TestBackend {
 
 impl TestBackend {
     fn new(name: &str) -> Self {
-        Self { name: name.to_string() }
+        Self {
+            name: name.to_string(),
+        }
     }
 }
 
@@ -109,19 +111,19 @@ async fn from_factories_creates_correct_number() {
             count: Arc::new(AtomicU32::new(0)),
         }),
     ];
-    let lb = LoadBalancer::from_factories(factories, round_robin()).await.unwrap();
+    let lb = LoadBalancer::from_factories(factories, round_robin())
+        .await
+        .unwrap();
     assert_eq!(lb.backend_count(), 2);
 }
 
 #[tokio::test]
 async fn from_factories_with_initial_metrics() {
-    let factories: Vec<Box<dyn BackendFactory>> = vec![
-        Box::new(TestFactory {
-            name: "a".to_string(),
-            fail: false,
-            count: Arc::new(AtomicU32::new(0)),
-        }),
-    ];
+    let factories: Vec<Box<dyn BackendFactory>> = vec![Box::new(TestFactory {
+        name: "a".to_string(),
+        fail: false,
+        count: Arc::new(AtomicU32::new(0)),
+    })];
     let metrics = vec![TunnelMetrics {
         rtt: Some(Duration::from_millis(5)),
         ..Default::default()
@@ -148,13 +150,11 @@ async fn factory_output_struct_debug() {
 
 #[tokio::test]
 async fn from_factories_uses_provided_metrics_over_factory() {
-    let factories: Vec<Box<dyn BackendFactory>> = vec![
-        Box::new(TestFactory {
-            name: "a".to_string(),
-            fail: false,
-            count: Arc::new(AtomicU32::new(0)),
-        }),
-    ];
+    let factories: Vec<Box<dyn BackendFactory>> = vec![Box::new(TestFactory {
+        name: "a".to_string(),
+        fail: false,
+        count: Arc::new(AtomicU32::new(0)),
+    })];
     let metrics = vec![TunnelMetrics {
         rtt: Some(Duration::from_millis(100)),
         ..Default::default()

@@ -2,16 +2,18 @@
 
 use std::time::Duration;
 
-use rota::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
-use rota::strategies::{
-    round_robin, random, lowest_rtt, least_connections, hash_by_addr,
-    weighted_round_robin, failover, health_weighted, sticky,
-    RoundRobin, Random, LowestRtt, LeastConnections, HashByAddr,
-    WeightedRoundRobin, Failover, HealthWeighted, Sticky,
+use rota_lb::strategies::{
+    failover, hash_by_addr, health_weighted, least_connections, lowest_rtt, random, round_robin,
+    sticky, weighted_round_robin, Failover, HashByAddr, HealthWeighted, LeastConnections,
+    LowestRtt, Random, RoundRobin, Sticky, WeightedRoundRobin,
 };
+use rota_lb::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
 
 fn make_view(rtts: &[Option<u64>], active: &[u32], errors: &[u32]) -> PoolView<'static> {
-    let metrics: Vec<TunnelMetrics> = rtts.iter().zip(active.iter()).zip(errors.iter())
+    let metrics: Vec<TunnelMetrics> = rtts
+        .iter()
+        .zip(active.iter())
+        .zip(errors.iter())
         .map(|((rtt, &a), &e)| TunnelMetrics {
             rtt: rtt.map(Duration::from_millis),
             active_connections: a,
@@ -134,7 +136,10 @@ fn hash_by_addr_consistent() {
     let mut s = HashByAddr::new();
     let v = make_view(&[Some(10); 5], &[0; 5], &[0; 5]);
     let addr = "api.example.com:443";
-    let v1 = PoolView { dial_addr: addr, ..v };
+    let v1 = PoolView {
+        dial_addr: addr,
+        ..v
+    };
     let a1 = s.pick(&v1);
     let a2 = s.pick(&v1);
     assert_eq!(a1, a2);
@@ -146,8 +151,14 @@ fn hash_by_addr_different_addrs() {
     let metrics: Vec<TunnelMetrics> = (0..3).map(|_| TunnelMetrics::default()).collect();
     let metrics = Box::leak(Box::new(metrics).into_boxed_slice());
 
-    let v1 = PoolView { dial_addr: "a:80", metrics };
-    let v2 = PoolView { dial_addr: "b:80", metrics };
+    let v1 = PoolView {
+        dial_addr: "a:80",
+        metrics,
+    };
+    let v2 = PoolView {
+        dial_addr: "b:80",
+        metrics,
+    };
     // Same metrics, different addresses - should distribute
     let _ = s.pick(&v1);
     let _ = s.pick(&v2);

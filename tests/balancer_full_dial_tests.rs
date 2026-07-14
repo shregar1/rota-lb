@@ -1,21 +1,20 @@
 //! Tests for the full dial() path in balancer.rs to improve coverage.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::io::duplex;
 
-use rota::backend::{Backend, Connection};
-use rota::error::Error;
-use rota::strategy::TunnelMetrics;
-use rota::strategies::{
-    round_robin, lowest_rtt, failover, health_weighted, sticky, hash_by_addr,
-    weighted_round_robin,
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::error::Error;
+use rota_lb::retry::{ExponentialBackoff, FixedRetry, NoRetry, RetryPolicyBuilder};
+use rota_lb::strategies::{
+    failover, hash_by_addr, health_weighted, lowest_rtt, round_robin, sticky, weighted_round_robin,
 };
-use rota::retry::{ExponentialBackoff, FixedRetry, NoRetry, RetryPolicyBuilder};
-use rota::LoadBalancer;
+use rota_lb::strategy::TunnelMetrics;
+use rota_lb::LoadBalancer;
 
 struct FullDialBackend {
     name: String,
@@ -127,7 +126,8 @@ async fn dial_with_weighted_round_robin() {
             ..Default::default()
         },
     ];
-    let lb = LoadBalancer::new_with_metrics(backends, metrics, weighted_round_robin(), None, None).unwrap();
+    let lb = LoadBalancer::new_with_metrics(backends, metrics, weighted_round_robin(), None, None)
+        .unwrap();
     let r = lb.dial("a:80").await;
     assert!(r.is_ok());
 }
@@ -259,13 +259,13 @@ async fn dial_with_retry_policy_builder_clone() {
 //  from_factories with all strategies
 // ============================================================================
 
-fn make_factory(name: &'static str) -> Box<dyn rota::BackendFactory> {
+fn make_factory(name: &'static str) -> Box<dyn rota_lb::BackendFactory> {
     struct F(&'static str);
     #[async_trait::async_trait]
-    impl rota::BackendFactory for F {
-        async fn create(&self) -> Result<rota::factory::BackendOutput, Error> {
+    impl rota_lb::BackendFactory for F {
+        async fn create(&self) -> Result<rota_lb::factory::BackendOutput, Error> {
             let (_a, _b) = duplex(64);
-            Ok(rota::factory::BackendOutput {
+            Ok(rota_lb::factory::BackendOutput {
                 backend: Box::new(FullDialBackend::new(self.0)),
                 initial_metrics: TunnelMetrics::default(),
             })
@@ -276,48 +276,60 @@ fn make_factory(name: &'static str) -> Box<dyn rota::BackendFactory> {
 
 #[tokio::test]
 async fn from_factories_with_lowest_rtt() {
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![make_factory("a")];
-    let lb = LoadBalancer::from_factories(factories, lowest_rtt()).await.unwrap();
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![make_factory("a")];
+    let lb = LoadBalancer::from_factories(factories, lowest_rtt())
+        .await
+        .unwrap();
     let r = lb.dial("a:80").await;
     assert!(r.is_ok());
 }
 
 #[tokio::test]
 async fn from_factories_with_weighted_round_robin() {
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![make_factory("a")];
-    let lb = LoadBalancer::from_factories(factories, weighted_round_robin()).await.unwrap();
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![make_factory("a")];
+    let lb = LoadBalancer::from_factories(factories, weighted_round_robin())
+        .await
+        .unwrap();
     let r = lb.dial("a:80").await;
     assert!(r.is_ok());
 }
 
 #[tokio::test]
 async fn from_factories_with_failover() {
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![make_factory("a")];
-    let lb = LoadBalancer::from_factories(factories, failover()).await.unwrap();
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![make_factory("a")];
+    let lb = LoadBalancer::from_factories(factories, failover())
+        .await
+        .unwrap();
     let r = lb.dial("a:80").await;
     assert!(r.is_ok());
 }
 
 #[tokio::test]
 async fn from_factories_with_health_weighted() {
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![make_factory("a")];
-    let lb = LoadBalancer::from_factories(factories, health_weighted()).await.unwrap();
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![make_factory("a")];
+    let lb = LoadBalancer::from_factories(factories, health_weighted())
+        .await
+        .unwrap();
     let r = lb.dial("a:80").await;
     assert!(r.is_ok());
 }
 
 #[tokio::test]
 async fn from_factories_with_sticky() {
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![make_factory("a")];
-    let lb = LoadBalancer::from_factories(factories, sticky()).await.unwrap();
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![make_factory("a")];
+    let lb = LoadBalancer::from_factories(factories, sticky())
+        .await
+        .unwrap();
     let r = lb.dial("a:80").await;
     assert!(r.is_ok());
 }
 
 #[tokio::test]
 async fn from_factories_with_hash_by_addr() {
-    let factories: Vec<Box<dyn rota::BackendFactory>> = vec![make_factory("a")];
-    let lb = LoadBalancer::from_factories(factories, hash_by_addr()).await.unwrap();
+    let factories: Vec<Box<dyn rota_lb::BackendFactory>> = vec![make_factory("a")];
+    let lb = LoadBalancer::from_factories(factories, hash_by_addr())
+        .await
+        .unwrap();
     let r = lb.dial("a:80").await;
     assert!(r.is_ok());
 }

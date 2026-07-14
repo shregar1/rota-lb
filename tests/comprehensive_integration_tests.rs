@@ -29,29 +29,29 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
 
-use rota::backend::{Backend, Connection};
-use rota::constants::{
-    DEFAULT_ALPN_PROTOCOLS, DEFAULT_DIAL_TIMEOUT, DEFAULT_HEALTH_CHECK_INTERVAL,
-    DEFAULT_HEALTH_CHECK_TIMEOUT, DEFAULT_HEALTHY_THRESHOLD, DEFAULT_MAX_RETRY_DELAY,
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::constants::{
+    DEFAULT_ALPN_PROTOCOLS, DEFAULT_DIAL_TIMEOUT, DEFAULT_HEALTHY_THRESHOLD,
+    DEFAULT_HEALTH_CHECK_INTERVAL, DEFAULT_HEALTH_CHECK_TIMEOUT, DEFAULT_MAX_RETRY_DELAY,
     DEFAULT_RETRY_MULTIPLIER, DEFAULT_RTT_US, DEFAULT_SRV_PREFIX, DEFAULT_UNHEALTHY_THRESHOLD,
     JITTER_FACTOR, MAX_BACKENDS, MIN_BACKENDS, MS_PER_SECOND, STRATEGY_NAMES,
 };
-use rota::error::Error;
-use rota::factory::{BackendFactory, BackendOutput};
-use rota::health::{
+use rota_lb::error::Error;
+use rota_lb::factory::{BackendFactory, BackendOutput};
+use rota_lb::health::{
     is_healthy, record_dial_result, HealthCheckConfig, HealthChecker, HealthState,
 };
-use rota::retry::{
+use rota_lb::retry::{
     is_transient_error, ExponentialBackoff, FixedRetry, NoRetry, RetryOnError, RetryPolicy,
     RetryPolicyBuilder,
 };
-use rota::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
-use rota::strategies::{
+use rota_lb::strategies::{
     failover, hash_by_addr, health_weighted, least_connections, lowest_rtt, random, round_robin,
     sticky, weighted_round_robin, Failover, HashByAddr, HealthWeighted, LeastConnections,
     LowestRtt, Random, RoundRobin, Sticky, WeightedRoundRobin,
 };
-use rota::LoadBalancer;
+use rota_lb::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
+use rota_lb::LoadBalancer;
 
 // ===========================================================================
 //  Test fixtures
@@ -154,7 +154,9 @@ impl Backend for HangingBackend {
 }
 
 fn echo_pool(n: usize) -> Vec<Box<dyn Backend>> {
-    (0..n).map(|_| Box::new(EchoBackend::new()) as Box<dyn Backend>).collect()
+    (0..n)
+        .map(|_| Box::new(EchoBackend::new()) as Box<dyn Backend>)
+        .collect()
 }
 
 fn arc_echo_pool(n: usize) -> Vec<Arc<EchoBackend>> {
@@ -199,7 +201,10 @@ fn error_factory_includes_message() {
 #[test]
 fn error_backend_includes_message() {
     let err = Error::backend("connection refused");
-    assert_eq!(err.to_string(), "backend operation failed: connection refused");
+    assert_eq!(
+        err.to_string(),
+        "backend operation failed: connection refused"
+    );
 }
 
 #[test]
@@ -394,14 +399,18 @@ async fn dial_rejects_missing_port() {
 async fn dial_rejects_port_zero() {
     let lb = LoadBalancer::new(echo_pool(1), round_robin()).unwrap();
     let err = lb.dial("example.com:0").await.unwrap_err();
-    assert!(matches!(err, Error::InvalidAddress { reason, .. } if reason == "port must be 1-65535"));
+    assert!(
+        matches!(err, Error::InvalidAddress { reason, .. } if reason == "port must be 1-65535")
+    );
 }
 
 #[tokio::test]
 async fn dial_rejects_unparseable_port() {
     let lb = LoadBalancer::new(echo_pool(1), round_robin()).unwrap();
     let err = lb.dial("example.com:abc").await.unwrap_err();
-    assert!(matches!(err, Error::InvalidAddress { reason, .. } if reason == "port must be 1-65535"));
+    assert!(
+        matches!(err, Error::InvalidAddress { reason, .. } if reason == "port must be 1-65535")
+    );
 }
 
 #[tokio::test]
@@ -555,7 +564,10 @@ async fn fixed_retry_dials_until_success() {
     // total_dials counts the initial pick; per-attempt errors during retries
     // are NOT surfaced as total_errors until retries are exhausted. The final
     // successful attempt therefore shows total_errors=0 and total_dials >= 1.
-    assert_eq!(m.total_errors, 0, "successful retry resets the error counter");
+    assert_eq!(
+        m.total_errors, 0,
+        "successful retry resets the error counter"
+    );
     assert!(m.total_dials >= 1);
 }
 
@@ -574,7 +586,10 @@ async fn fixed_retry_respects_max_attempts() {
     let _ = lb.dial("a:80").await;
     let m = lb.metrics().await[0];
     // When retries are exhausted, handle_dial_error fires once with the final error.
-    assert_eq!(m.total_errors, 1, "retries exhausted produces one total_errors increment");
+    assert_eq!(
+        m.total_errors, 1,
+        "retries exhausted produces one total_errors increment"
+    );
 }
 
 #[tokio::test]
@@ -592,17 +607,24 @@ async fn exponential_backoff_resets_recent_errors_on_success() {
     let conn = lb.dial("a:80").await.unwrap();
     drop(conn);
     let m = lb.metrics().await[0];
-    assert_eq!(m.recent_errors, 0, "successful retry must reset recent_errors");
-    assert_eq!(m.total_errors, 0, "successful retry resets total_errors too");
+    assert_eq!(
+        m.recent_errors, 0,
+        "successful retry must reset recent_errors"
+    );
+    assert_eq!(
+        m.total_errors, 0,
+        "successful retry resets total_errors too"
+    );
 }
 
 #[tokio::test]
 async fn retry_on_error_predicate_filters_by_error_type() {
     let backend = EchoBackend::always_failing();
     let backends: Vec<Box<dyn Backend>> = vec![Box::new(backend)];
-    let policy = RetryOnError::new(FixedRetry::new(Duration::from_millis(1)), |e| {
-        matches!(e, Error::Backend(msg) if msg.contains("retryable"))
-    });
+    let policy = RetryOnError::new(
+        FixedRetry::new(Duration::from_millis(1)),
+        |e| matches!(e, Error::Backend(msg) if msg.contains("retryable")),
+    );
     let lb = LoadBalancer::builder()
         .backends(backends)
         .strategy(RoundRobin::new())
@@ -843,7 +865,11 @@ fn sticky_pins_after_first_pick() {
     let v = make_view(&[Some(10), Some(20), Some(30)], &[0; 3], &[0; 3]);
     let first = s.pick(&v);
     for _ in 0..30 {
-        assert_eq!(s.pick(&v), first, "Sticky must always return the pinned index");
+        assert_eq!(
+            s.pick(&v),
+            first,
+            "Sticky must always return the pinned index"
+        );
     }
 }
 
@@ -1113,7 +1139,10 @@ fn record_dial_result_increments_only_recent_errors_on_failure() {
     assert_eq!(metrics[0].total_errors, 2);
     record_dial_result(&mut metrics, 0, true);
     assert_eq!(metrics[0].recent_errors, 0);
-    assert_eq!(metrics[0].total_errors, 2, "total does not decrement on success");
+    assert_eq!(
+        metrics[0].total_errors, 2,
+        "total does not decrement on success"
+    );
 }
 
 #[test]
@@ -1130,7 +1159,7 @@ fn record_dial_result_out_of_bounds_is_a_noop() {
 #[cfg(feature = "discovery")]
 mod discovery_tests {
     use super::*;
-    use rota::discovery::{
+    use rota_lb::discovery::{
         BackendDescriptor, BackendFactoryFromDescriptor, Discover, ServiceDiscovery,
         StaticDiscovery,
     };
@@ -1213,12 +1242,8 @@ mod discovery_tests {
         };
         // Begin with a single no-id backend so the LoadBalancer can be built.
         let lb = LoadBalancer::new(echo_pool(1), round_robin()).unwrap();
-        let mut discover = Discover::new(
-            lb,
-            discovery,
-            DescFactory,
-            Some(Duration::from_millis(20)),
-        );
+        let mut discover =
+            Discover::new(lb, discovery, DescFactory, Some(Duration::from_millis(20)));
         discover.start().await.unwrap();
         tokio::time::sleep(Duration::from_millis(120)).await;
 
@@ -1388,12 +1413,15 @@ fn constants_have_expected_values() {
 
 #[test]
 fn calculate_weight_is_monotonic_in_inverse_rtt() {
-    use rota::constants::calculate_weight;
+    use rota_lb::constants::calculate_weight;
     let fast = calculate_weight(Duration::from_millis(1));
     let slow = calculate_weight(Duration::from_millis(1000));
     let very_slow = calculate_weight(Duration::from_secs(5));
     assert!(fast > slow, "fast={fast} should beat slow={slow}");
-    assert!(slow >= very_slow, "slow={slow} should be >= very_slow={very_slow}");
+    assert!(
+        slow >= very_slow,
+        "slow={slow} should be >= very_slow={very_slow}"
+    );
     assert!(fast >= 1);
 }
 
@@ -1459,7 +1487,10 @@ fn exponential_backoff_with_max_attempts_returns_none_after_budget() {
 fn exponential_backoff_total_timeout_can_be_set_via_builder() {
     // We can't set total_timeout via a builder (no setter exposed), so confirm
     // the default is None and that no_retry reports the same.
-    assert_eq!(ExponentialBackoff::new(Duration::from_millis(1)).total_timeout(), None);
+    assert_eq!(
+        ExponentialBackoff::new(Duration::from_millis(1)).total_timeout(),
+        None
+    );
 }
 
 // ===========================================================================
@@ -1469,7 +1500,7 @@ fn exponential_backoff_total_timeout_can_be_set_via_builder() {
 #[cfg(feature = "tls")]
 #[test]
 fn tls_config_default_disables_client_cert_and_keeps_alpn_defaults() {
-    let cfg = rota::TlsConfig::new("example.com");
+    let cfg = rota_lb::TlsConfig::new("example.com");
     assert!(cfg.verify_hostname);
     assert!(cfg.client_cert.is_none());
     assert!(cfg.connect_timeout.is_none());
@@ -1480,7 +1511,7 @@ fn tls_config_default_disables_client_cert_and_keeps_alpn_defaults() {
 #[cfg(feature = "tls")]
 #[test]
 fn tls_config_builds_with_alpn_and_connect_timeout() {
-    let cfg = rota::TlsConfig::new("example.com")
+    let cfg = rota_lb::TlsConfig::new("example.com")
         .with_alpn_protocols(vec![b"h2".to_vec()])
         .with_connect_timeout(Duration::from_secs(2));
     assert!(cfg.build_client_config().is_ok());
@@ -1489,7 +1520,7 @@ fn tls_config_builds_with_alpn_and_connect_timeout() {
 #[cfg(feature = "tls")]
 #[test]
 fn tls_config_build_succeeds_with_disabled_hostname_check() {
-    let cfg = rota::TlsConfig::new("example.com").danger_bypass_hostname_check_only();
+    let cfg = rota_lb::TlsConfig::new("example.com").danger_bypass_hostname_check_only();
     assert!(!cfg.verify_hostname);
     assert!(cfg.build_client_config().is_ok());
 }
@@ -1499,7 +1530,7 @@ fn tls_config_build_succeeds_with_disabled_hostname_check() {
 fn tls_config_with_root_certs_invalid_cert_errors() {
     use rustls::pki_types::CertificateDer;
     let bogus = CertificateDer::from(vec![0u8; 32]);
-    let cfg = rota::TlsConfig::new("example.com").with_root_certs(vec![bogus]);
+    let cfg = rota_lb::TlsConfig::new("example.com").with_root_certs(vec![bogus]);
     // A 32-byte zero array is not a valid DER certificate; build should fail.
     let res = cfg.build_client_config();
     assert!(res.is_err());
@@ -1512,7 +1543,7 @@ fn tls_config_with_root_certs_invalid_cert_errors() {
 #[cfg(all(feature = "tower", feature = "discovery"))]
 mod tower_integration {
     use super::*;
-    use rota::{LbRequest, LoadBalancer};
+    use rota_lb::{LbRequest, LoadBalancer};
     use tower::ServiceExt;
 
     #[tokio::test]
@@ -1552,7 +1583,7 @@ mod tower_integration {
 
 #[cfg(feature = "ffi")]
 mod ffi_tests {
-    use rota::ffi::RotaVersion;
+    use rota_lb::ffi::RotaVersion;
 
     // We exercise FFI through the C ABI. The opaque handle type is private,
     // so we hold it as a raw pointer and pass it back to the public functions.
@@ -1629,12 +1660,7 @@ mod ffi_tests {
     #[test]
     fn ffi_select_returns_u32_max_on_null_arguments() {
         unsafe {
-            let rc = rota_lb_select(
-                std::ptr::null_mut(),
-                std::ptr::null(),
-                std::ptr::null(),
-                0,
-            );
+            let rc = rota_lb_select(std::ptr::null_mut(), std::ptr::null(), std::ptr::null(), 0);
             assert_eq!(rc, u32::MAX);
         }
     }

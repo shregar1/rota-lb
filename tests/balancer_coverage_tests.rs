@@ -1,21 +1,20 @@
 //! Additional tests to improve balancer.rs coverage.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::io::duplex;
 
-use rota::backend::{Backend, Connection};
-use rota::error::Error;
-use rota::strategy::TunnelMetrics;
-use rota::strategies::{
-    round_robin, lowest_rtt, health_weighted, failover, sticky,
-    HashByAddr, WeightedRoundRobin,
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::error::Error;
+use rota_lb::retry::{ExponentialBackoff, FixedRetry, NoRetry, RetryOnError};
+use rota_lb::strategies::{
+    failover, health_weighted, lowest_rtt, round_robin, sticky, HashByAddr, WeightedRoundRobin,
 };
-use rota::retry::{ExponentialBackoff, FixedRetry, NoRetry, RetryOnError};
-use rota::LoadBalancer;
+use rota_lb::strategy::TunnelMetrics;
+use rota_lb::LoadBalancer;
 
 struct FullMockBackend {
     name: String,
@@ -239,10 +238,7 @@ async fn dial_with_no_retry() {
 #[tokio::test]
 async fn dial_with_retry_on_error() {
     let backends: Vec<Box<dyn Backend>> = vec![Box::new(FullMockBackend::new("a"))];
-    let policy = RetryOnError::new(
-        FixedRetry::new(Duration::from_millis(1)),
-        |_| true,
-    );
+    let policy = RetryOnError::new(FixedRetry::new(Duration::from_millis(1)), |_| true);
     let lb = LoadBalancer::builder()
         .backends(backends)
         .strategy(round_robin())
@@ -279,7 +275,8 @@ async fn metrics_with_seeded_values() {
         total_dials: 0,
         total_errors: 0,
     }];
-    let lb = LoadBalancer::new_with_metrics(backends, initial_metrics, round_robin(), None, None).unwrap();
+    let lb = LoadBalancer::new_with_metrics(backends, initial_metrics, round_robin(), None, None)
+        .unwrap();
     let metrics = lb.metrics().await;
     assert_eq!(metrics[0].rtt, Some(Duration::from_millis(50)));
 }

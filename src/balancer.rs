@@ -1,11 +1,11 @@
 //! The `LoadBalancer` — N backends, distributed by a strategy.
 
+use std::io;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use std::io;
 
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::{Mutex, RwLock};
@@ -49,7 +49,9 @@ impl LoadBalancer {
         backends: Vec<Box<dyn Backend>>,
         strategy: impl BalanceStrategy + 'static,
     ) -> Result<Self, Error> {
-        let metrics = (0..backends.len()).map(|_| TunnelMetrics::default()).collect();
+        let metrics = (0..backends.len())
+            .map(|_| TunnelMetrics::default())
+            .collect();
         Self::new_with_metrics(backends, metrics, strategy, None, None)
     }
 
@@ -97,7 +99,10 @@ impl LoadBalancer {
         let mut backends = Vec::with_capacity(factories.len());
         let mut metrics = Vec::with_capacity(factories.len());
         for f in &factories {
-            let BackendOutput { backend, initial_metrics } = f.create().await?;
+            let BackendOutput {
+                backend,
+                initial_metrics,
+            } = f.create().await?;
             backends.push(backend);
             metrics.push(initial_metrics);
         }
@@ -117,7 +122,7 @@ impl LoadBalancer {
     ///
     /// # Example
     /// ```
-    /// # use rota::{Backend, Connection, LoadBalancer, round_robin, Error};
+    /// # use rota_lb::{Backend, Connection, LoadBalancer, round_robin, Error};
     /// # async fn example() -> Result<(), Error> {
     /// let backends: Vec<Box<dyn Backend>> = vec![]; // your backends here
     /// let lb = LoadBalancer::builder()
@@ -253,10 +258,11 @@ impl LoadBalancer {
                 Err(e) => {
                     warn!(backend_idx = idx, attempt, error = %e, "dial failed");
                     let delay = effective_policy.as_ref().and_then(|policy| {
-                        let within_budget = policy
-                            .total_timeout()
-                            .map_or(true, |t| start.elapsed() < t);
-                        within_budget.then(|| policy.should_retry(attempt, &e)).flatten()
+                        let within_budget =
+                            policy.total_timeout().map_or(true, |t| start.elapsed() < t);
+                        within_budget
+                            .then(|| policy.should_retry(attempt, &e))
+                            .flatten()
                     });
                     let Some(delay) = delay else {
                         return Err(e);
@@ -304,11 +310,7 @@ impl LoadBalancer {
     }
 
     /// Add a backend with an ID for service discovery tracking.
-    pub async fn add_backend_with_id(
-        &mut self,
-        id: String,
-        backend: Box<dyn Backend>,
-    ) -> usize {
+    pub async fn add_backend_with_id(&mut self, id: String, backend: Box<dyn Backend>) -> usize {
         let mut metrics = self.metrics.write().await;
         let idx = self.backends.len();
         self.backends.push(backend);
@@ -339,7 +341,10 @@ impl LoadBalancer {
 
     /// Remove a backend by reference (e.g., by pointer equality).
     pub async fn remove_backend_by_ptr(&mut self, backend: &dyn Backend) -> bool {
-        let index = self.backends.iter().position(|b| std::ptr::eq(b.as_ref(), backend));
+        let index = self
+            .backends
+            .iter()
+            .position(|b| std::ptr::eq(b.as_ref(), backend));
         if let Some(idx) = index {
             self.remove_backend(idx).await
         } else {
@@ -410,7 +415,9 @@ impl LoadBalancer {
     /// Check if a backend is draining.
     pub async fn is_draining(&self, index: usize) -> bool {
         let metrics = self.metrics.read().await;
-        metrics.get(index).is_some_and(|m| m.recent_errors == u32::MAX)
+        metrics
+            .get(index)
+            .is_some_and(|m| m.recent_errors == u32::MAX)
     }
 
     /// Undrain a backend - allow it to receive new connections again.
@@ -443,7 +450,7 @@ impl LoadBalancer {
 ///
 /// # Example
 /// ```
-/// # use rota::{Backend, Connection, LoadBalancer, round_robin, Error};
+/// # use rota_lb::{Backend, Connection, LoadBalancer, round_robin, Error};
 /// # async fn example() -> Result<(), Error> {
 /// let backends: Vec<Box<dyn Backend>> = vec![]; // your backends here
 /// let lb = LoadBalancer::builder()
@@ -518,7 +525,9 @@ impl LoadBalancerBuilder {
 
     /// Build the load balancer. Exactly one of `backends` or `factories` must be set.
     pub async fn build(self) -> Result<LoadBalancer, Error> {
-        let strategy = self.strategy.ok_or_else(|| Error::Factory("strategy required".into()))?;
+        let strategy = self
+            .strategy
+            .ok_or_else(|| Error::Factory("strategy required".into()))?;
         let dial_timeout = self.dial_timeout;
         let retry_policy = self.retry_policy;
 
@@ -526,14 +535,22 @@ impl LoadBalancerBuilder {
             (Some(backends), None) => {
                 let metrics = match self.initial_metrics {
                     Some(m) if m.len() == backends.len() => m,
-                    Some(m) => return Err(Error::Factory(format!(
-                        "initial_metrics.len() ({}) must equal backends.len() ({})",
-                        m.len(),
-                        backends.len()
-                    ))),
+                    Some(m) => {
+                        return Err(Error::Factory(format!(
+                            "initial_metrics.len() ({}) must equal backends.len() ({})",
+                            m.len(),
+                            backends.len()
+                        )))
+                    }
                     None => vec![TunnelMetrics::default(); backends.len()],
                 };
-                LoadBalancer::new_with_metrics(backends, metrics, strategy, dial_timeout, retry_policy)
+                LoadBalancer::new_with_metrics(
+                    backends,
+                    metrics,
+                    strategy,
+                    dial_timeout,
+                    retry_policy,
+                )
             }
             (None, Some(factories)) => {
                 // For factories, we need to create them first then build
@@ -543,22 +560,35 @@ impl LoadBalancerBuilder {
                 let mut created_backends = Vec::with_capacity(factories.len());
                 let mut created_metrics = Vec::with_capacity(factories.len());
                 for f in &factories {
-                    let BackendOutput { backend, initial_metrics } = f.create().await?;
+                    let BackendOutput {
+                        backend,
+                        initial_metrics,
+                    } = f.create().await?;
                     created_backends.push(backend);
                     created_metrics.push(initial_metrics);
                 }
                 let final_metrics = match self.initial_metrics {
                     Some(m) if m.len() == factories.len() => m,
-                    Some(m) => return Err(Error::Factory(format!(
-                        "initial_metrics.len() ({}) must equal factories.len() ({})",
-                        m.len(),
-                        factories.len()
-                    ))),
+                    Some(m) => {
+                        return Err(Error::Factory(format!(
+                            "initial_metrics.len() ({}) must equal factories.len() ({})",
+                            m.len(),
+                            factories.len()
+                        )))
+                    }
                     None => created_metrics,
                 };
-                LoadBalancer::new_with_metrics(created_backends, final_metrics, strategy, dial_timeout, retry_policy)
+                LoadBalancer::new_with_metrics(
+                    created_backends,
+                    final_metrics,
+                    strategy,
+                    dial_timeout,
+                    retry_policy,
+                )
             }
-            (Some(_), Some(_)) => Err(Error::Factory("cannot set both backends and factories".into())),
+            (Some(_), Some(_)) => Err(Error::Factory(
+                "cannot set both backends and factories".into(),
+            )),
             (None, None) => Err(Error::Factory("backends or factories required".into())),
         }
     }
@@ -588,8 +618,7 @@ impl GuardedConnection {
 
 impl std::fmt::Debug for GuardedConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GuardedConnection")
-            .finish_non_exhaustive()
+        f.debug_struct("GuardedConnection").finish_non_exhaustive()
     }
 }
 
@@ -637,16 +666,10 @@ impl AsyncWrite for GuardedConnection {
     ) -> Poll<io::Result<usize>> {
         Pin::new(&mut self.inner).poll_write(cx, buf)
     }
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.inner).poll_flush(cx)
     }
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }

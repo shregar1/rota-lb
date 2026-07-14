@@ -12,8 +12,8 @@ use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use rota::backend::{Backend, Connection};
-use rota::error::Error;
+use rota_lb::backend::{Backend, Connection};
+use rota_lb::error::Error;
 
 // ============================================================================
 //  Mock feed server
@@ -231,7 +231,7 @@ pub fn backends_from(handles: &[FeedServerHandle]) -> Vec<Box<dyn Backend>> {
 
 /// Read at least `min_bytes` from `conn` or time out.
 pub async fn read_at_least(
-    conn: &mut rota::GuardedConnection,
+    conn: &mut rota_lb::GuardedConnection,
     min_bytes: usize,
     timeout: Duration,
 ) -> Result<Vec<u8>, &'static str> {
