@@ -97,6 +97,8 @@ pub mod error;
 pub mod errors;
 /// Backend factory trait and output type.
 pub mod factory;
+#[cfg(feature = "ffi")]
+pub mod ffi;
 pub mod utils;
 /// Core services (`LoadBalancer`, etc).
 pub mod services;
@@ -115,8 +117,6 @@ pub use utils::health as health;
 pub use utils::retry as retry;
 #[cfg(feature = "discovery")]
 pub use utils::discovery as discovery;
-#[cfg(feature = "ffi")]
-pub use utils::ffi as ffi;
 #[cfg(feature = "tls")]
 pub use configs::tls as tls;
 
