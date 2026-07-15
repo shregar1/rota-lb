@@ -90,16 +90,10 @@
 /// Configuration types (TLS, etc).
 pub mod configs;
 pub mod constants;
-#[cfg(feature = "discovery")]
-pub mod discovery;
 /// Enum types.
 pub mod enums;
 pub mod error;
-pub mod factory;
-#[cfg(feature = "ffi")]
-pub mod ffi;
-pub mod health;
-pub mod retry;
+pub mod utils;
 /// Core services (`LoadBalancer`, etc).
 pub mod services;
 /// Built-in load-balancing strategies.
@@ -113,6 +107,13 @@ pub mod tower;
 pub use traits::backend as backend;
 pub use traits::strategy as strategy;
 pub use services::balancer as balancer;
+pub use utils::factory as factory;
+pub use utils::health as health;
+pub use utils::retry as retry;
+#[cfg(feature = "discovery")]
+pub use utils::discovery as discovery;
+#[cfg(feature = "ffi")]
+pub use utils::ffi as ffi;
 #[cfg(feature = "tls")]
 pub use configs::tls as tls;
 
@@ -121,9 +122,9 @@ pub use traits::backend::{Backend, Connection};
 pub use services::balancer::{GuardedConnection, LoadBalancer};
 pub use constants::*;
 pub use error::Error;
-pub use factory::{BackendFactory, BackendOutput};
-pub use health::{is_healthy, record_dial_result, HealthCheckConfig, HealthChecker, HealthState};
-pub use retry::{
+pub use utils::factory::{BackendFactory, BackendOutput};
+pub use utils::health::{is_healthy, record_dial_result, HealthCheckConfig, HealthChecker, HealthState};
+pub use utils::retry::{
     is_transient_error, ExponentialBackoff, FixedRetry, NoRetry, RetryOnError, RetryPolicy,
     RetryPolicyBuilder,
 };
@@ -135,7 +136,7 @@ pub use traits::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
 
 // Discovery
 #[cfg(feature = "discovery")]
-pub use discovery::{
+pub use utils::discovery::{
     BackendDescriptor, BackendFactoryFromDescriptor, Discover, ServiceDiscovery, StaticDiscovery,
 };
 

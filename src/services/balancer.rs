@@ -13,8 +13,8 @@ use tracing::{debug, warn};
 
 use crate::traits::backend::{Backend, Connection};
 use crate::error::Error;
-use crate::factory::{BackendFactory, BackendOutput};
-use crate::retry::RetryPolicy;
+use crate::utils::factory::{BackendFactory, BackendOutput};
+use crate::utils::retry::RetryPolicy;
 use crate::traits::strategy::{BalanceStrategy, PoolView, TunnelMetrics};
 
 /// The load balancer: N backends, dial distributed across them by the

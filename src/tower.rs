@@ -16,7 +16,7 @@ mod tower_impl {
     use std::task::{Context, Poll};
 
     use crate::error::Error;
-    use crate::retry::RetryPolicy;
+    use crate::utils::retry::RetryPolicy;
     use tower::Service;
 
     /// A request for the load balancer service.
