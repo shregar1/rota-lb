@@ -34,8 +34,8 @@ fn fixed_retry_clone() {
     let p = FixedRetry::new(Duration::from_millis(100));
     let p2 = p.clone();
     assert_eq!(
-        p.should_retry(1, &Error::Backend("test".into())),
-        p2.should_retry(1, &Error::Backend("test".into()))
+        p.should_retry(1, &Error::backend("test")),
+        p2.should_retry(1, &Error::backend("test"))
     );
 }
 
@@ -55,7 +55,7 @@ fn fixed_retry_debug() {
 fn fixed_retry_with_max_attempts_zero() {
     let p = FixedRetry::new(Duration::from_millis(100)).with_max_attempts(0);
     // 0 means no retries
-    assert_eq!(p.should_retry(1, &Error::Backend("test".into())), None);
+    assert_eq!(p.should_retry(1, &Error::backend("test")), None);
 }
 
 #[test]
@@ -63,8 +63,8 @@ fn fixed_retry_with_max_attempts_one() {
     let p = FixedRetry::new(Duration::from_millis(100)).with_max_attempts(2);
     // attempt 1: 1 >= 2 false, returns Some
     // attempt 2: 2 >= 2 true, returns None
-    assert!(p.should_retry(1, &Error::Backend("test".into())).is_some());
-    assert!(p.should_retry(2, &Error::Backend("test".into())).is_none());
+    assert!(p.should_retry(1, &Error::backend("test")).is_some());
+    assert!(p.should_retry(2, &Error::backend("test")).is_none());
 }
 
 #[test]
@@ -144,9 +144,9 @@ fn exponential_backoff_grows_exponentially() {
     let p = ExponentialBackoff::new(Duration::from_millis(100))
         .with_jitter(false)
         .with_multiplier(2.0);
-    let d1 = p.should_retry(1, &Error::Backend("test".into())).unwrap();
-    let d2 = p.should_retry(2, &Error::Backend("test".into())).unwrap();
-    let d3 = p.should_retry(3, &Error::Backend("test".into())).unwrap();
+    let d1 = p.should_retry(1, &Error::backend("test")).unwrap();
+    let d2 = p.should_retry(2, &Error::backend("test")).unwrap();
+    let d3 = p.should_retry(3, &Error::backend("test")).unwrap();
     // d2 should be 2x d1, d3 should be 4x d1
     assert_eq!(d2.as_millis(), (d1.as_millis() as f64 * 2.0) as u128);
     assert_eq!(d3.as_millis(), (d1.as_millis() as f64 * 4.0) as u128);
@@ -159,7 +159,7 @@ fn exponential_backoff_respects_max_delay_v2() {
         .with_jitter(false)
         .with_multiplier(2.0);
     // 100 * 2^5 = 3200ms, should be capped at 250ms
-    let d = p.should_retry(5, &Error::Backend("test".into())).unwrap();
+    let d = p.should_retry(5, &Error::backend("test")).unwrap();
     assert_eq!(d, Duration::from_millis(250));
 }
 
@@ -194,7 +194,7 @@ fn retry_on_error_max_attempts_delegates() {
 #[test]
 fn retry_on_error_no_retry_on_predicate_false() {
     let p = RetryOnError::new(FixedRetry::new(Duration::from_millis(100)), |_| false);
-    assert!(p.should_retry(1, &Error::Backend("test".into())).is_none());
+    assert!(p.should_retry(1, &Error::backend("test")).is_none());
 }
 
 #[test]
@@ -213,7 +213,7 @@ fn retry_policy_builder_no_retry() {
     let policy = RetryPolicyBuilder::default().no_retry().build();
     assert!(policy.is_some());
     let p = policy.unwrap();
-    assert!(p.should_retry(1, &Error::Backend("test".into())).is_none());
+    assert!(p.should_retry(1, &Error::backend("test")).is_none());
 }
 
 #[test]
@@ -223,7 +223,7 @@ fn retry_policy_builder_fixed_retry() {
         .build();
     assert!(policy.is_some());
     let p = policy.unwrap();
-    assert!(p.should_retry(1, &Error::Backend("test".into())).is_some());
+    assert!(p.should_retry(1, &Error::backend("test")).is_some());
 }
 
 #[test]
@@ -233,7 +233,7 @@ fn retry_policy_builder_exponential_backoff() {
         .build();
     assert!(policy.is_some());
     let p = policy.unwrap();
-    assert!(p.should_retry(1, &Error::Backend("test".into())).is_some());
+    assert!(p.should_retry(1, &Error::backend("test")).is_some());
 }
 
 #[test]
@@ -258,15 +258,12 @@ fn retry_policy_builder_clone() {
 
 #[test]
 fn is_transient_error_invalid_address_field() {
-    let err = Error::InvalidAddress {
-        addr: "test".to_string(),
-        reason: "no port",
-    };
+    let err = Error::invalid_address("test".to_string(), "no port");
     assert!(!is_transient_error(&err));
 }
 
 #[test]
 fn is_transient_error_factory() {
-    let err = Error::Factory("test".to_string());
+    let err = Error::factory("test");
     assert!(!is_transient_error(&err));
 }

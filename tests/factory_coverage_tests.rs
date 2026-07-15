@@ -24,7 +24,7 @@ impl BackendFactory for TestFactory {
     async fn create(&self) -> Result<BackendOutput, Error> {
         self.count.fetch_add(1, Ordering::SeqCst);
         if self.fail {
-            return Err(Error::Factory(format!("{}: factory failed", self.name)));
+            return Err(Error::factory(format!("{}: factory failed", self.name)));
         }
         let _ = duplex(64);
         Ok(BackendOutput {

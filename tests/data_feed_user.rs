@@ -579,7 +579,7 @@ async fn data_feed_user_dial_timeout_against_slow_backend() {
     impl Backend for SlowBackend {
         async fn dial(&self, _addr: &str) -> Result<Connection, Error> {
             tokio::time::sleep(self.delay).await;
-            let s = TcpStream::connect(&self.addr).await.map_err(Error::Io)?;
+            let s = TcpStream::connect(&self.addr).await.map_err(Error::from)?;
             Ok(Box::pin(s))
         }
         async fn shutdown(&mut self) {}
@@ -905,25 +905,25 @@ async fn data_feed_user_rejects_invalid_addresses() {
 
     // No port.
     let r = lb.dial("feed.example.com").await;
-    assert!(matches!(r, Err(Error::InvalidAddress { .. })));
+    assert!(matches!(r, Err(Error::InvalidAddress(_))));
 
     // Empty host.
     let r = lb.dial(":443").await;
-    assert!(matches!(r, Err(Error::InvalidAddress { .. })));
+    assert!(matches!(r, Err(Error::InvalidAddress(_))));
 
     // Port 0.
     let r = lb.dial("feed.example.com:0").await;
-    assert!(matches!(r, Err(Error::InvalidAddress { .. })));
+    assert!(matches!(r, Err(Error::InvalidAddress(_))));
 
     // Garbage port.
     let r = lb.dial("feed.example.com:abc").await;
-    assert!(matches!(r, Err(Error::InvalidAddress { .. })));
+    assert!(matches!(r, Err(Error::InvalidAddress(_))));
 }
 
 #[tokio::test]
 async fn data_feed_user_rejects_empty_pool() {
     let r = LoadBalancer::new(vec![], round_robin());
-    assert!(matches!(r, Err(Error::NoBackends)));
+    assert!(matches!(r, Err(Error::NoBackends(_))));
 }
 
 // ============================================================================

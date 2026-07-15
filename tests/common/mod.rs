@@ -207,9 +207,9 @@ impl Backend for TcpBackend {
         let remaining = self.fail_count.load(Ordering::SeqCst);
         if remaining > 0 {
             self.fail_count.fetch_sub(1, Ordering::SeqCst);
-            return Err(Error::Backend(format!("{}: simulated failure", self.addr)));
+            return Err(Error::backend(format!("{}: simulated failure", self.addr)));
         }
-        let stream = TcpStream::connect(&self.addr).await.map_err(Error::Io)?;
+        let stream = TcpStream::connect(&self.addr).await.map_err(Error::from)?;
         Ok(Box::pin(stream))
     }
 

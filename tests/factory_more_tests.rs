@@ -24,7 +24,7 @@ impl BackendFactory for CountingFactory {
     async fn create(&self) -> Result<BackendOutput, Error> {
         self.counter.fetch_add(1, Ordering::SeqCst);
         if self.fail {
-            return Err(Error::Factory("counting factory failed".into()));
+            return Err(Error::factory("counting factory failed"));
         }
         let _ = duplex(64);
         Ok(BackendOutput {
@@ -122,7 +122,7 @@ async fn factory_creation_with_zero_backends() {
     let factories: Vec<Box<dyn BackendFactory>> = vec![];
     let result = LoadBalancer::from_factories(factories, round_robin()).await;
     assert!(result.is_err());
-    if let Err(Error::NoBackends) = result {
+    if let Err(Error::NoBackends(_)) = result {
         // Expected
     } else {
         panic!("Expected NoBackends error");

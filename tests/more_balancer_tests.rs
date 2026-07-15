@@ -40,7 +40,7 @@ impl Backend for MockBackend {
         let remaining = self.fail_count.load(Ordering::SeqCst);
         if remaining > 0 {
             self.fail_count.fetch_sub(1, Ordering::SeqCst);
-            return Err(Error::Backend(format!("{}: simulated failure", self.name)));
+            return Err(Error::backend(format!("{}: simulated failure", self.name)));
         }
         let (a, _b) = duplex(64);
         Ok(Box::pin(a))

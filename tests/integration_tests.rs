@@ -43,7 +43,7 @@ impl Backend for MockBackend {
         let remaining = self.fail_count.load(Ordering::SeqCst);
         if remaining > 0 {
             self.fail_count.fetch_sub(1, Ordering::SeqCst);
-            return Err(Error::Backend(format!("{}: simulated failure", self.id)));
+            return Err(Error::backend(format!("{}: simulated failure", self.id)));
         }
         let (a, _b) = duplex(64);
         Ok(Box::pin(a))
@@ -92,7 +92,7 @@ async fn dial_rejects_invalid_address() {
     // Missing port
     let r = lb.dial("no-port").await;
     assert!(r.is_err());
-    if let Err(Error::InvalidAddress { .. }) = r {
+    if let Err(Error::InvalidAddress(_)) = r {
         // Expected
     } else {
         panic!("expected InvalidAddress error, got: {:?}", r);
@@ -124,7 +124,7 @@ async fn dial_all_backends_fail_no_retry() {
         async fn dial(&self, _addr: &str) -> Result<rota_lb::backend::Connection, rota_lb::Error> {
             self.fail_count
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Err(rota_lb::Error::Backend("always fails".into()))
+            Err(rota_lb::Error::backend("always fails"))
         }
         async fn shutdown(&mut self) {}
     }

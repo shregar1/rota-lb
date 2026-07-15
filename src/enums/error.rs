@@ -1,43 +1,57 @@
-use std::io;
+use crate::errors::{
+    backend_error::BackendError, factory_error::FactoryError, invalid_address::InvalidAddress,
+    io_error::IoError, no_backends::NoBackends,
+};
 
 /// Errors produced by the load balancer and the backends it manages.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// A dial target that is not a valid `"host:port"`.
-    #[error("invalid dial address {addr:?}: {reason}")]
-    InvalidAddress {
-        /// The address string that failed validation.
-        addr: String,
-        /// Why the address was rejected.
-        reason: &'static str,
-    },
+    #[error(transparent)]
+    InvalidAddress(#[from] InvalidAddress),
 
     /// The load balancer was constructed with zero backends.
-    #[error("no backends available — pool is empty")]
-    NoBackends,
+    #[error(transparent)]
+    NoBackends(#[from] NoBackends),
 
     /// A `BackendFactory::create` call failed.
-    #[error("backend factory failed: {0}")]
-    Factory(String),
+    #[error(transparent)]
+    Factory(#[from] FactoryError),
 
     /// A `Backend::dial` call failed.
-    #[error("backend operation failed: {0}")]
-    Backend(String),
+    #[error(transparent)]
+    Backend(#[from] BackendError),
 
     /// Underlying I/O error from a stream returned by `Backend::dial`.
-    #[error("i/o error: {0}")]
-    Io(#[from] io::Error),
+    #[error(transparent)]
+    Io(#[from] IoError),
 }
 
-/// Convenience: a stringly-typed error with a context message.
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(IoError(e))
+    }
+}
+
+/// Convenience constructors.
 impl Error {
     /// Create a [`Error::Backend`] from a message.
     pub fn backend(msg: impl Into<String>) -> Self {
-        Self::Backend(msg.into())
+        Self::Backend(BackendError(msg.into()))
     }
 
     /// Create a [`Error::Factory`] from a message.
     pub fn factory(msg: impl Into<String>) -> Self {
-        Self::Factory(msg.into())
+        Self::Factory(FactoryError(msg.into()))
+    }
+
+    /// The load balancer was constructed with zero backends.
+    pub const fn no_backends() -> Self {
+        Self::NoBackends(NoBackends)
+    }
+
+    /// A dial target that is not a valid `"host:port"`.
+    pub const fn invalid_address(addr: String, reason: &'static str) -> Self {
+        Self::InvalidAddress(InvalidAddress { addr, reason })
     }
 }

@@ -76,7 +76,7 @@ mod tower_impl {
 
         fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
             if self.backend_count() == 0 {
-                Poll::Ready(Err(Error::NoBackends))
+                Poll::Ready(Err(Error::no_backends()))
             } else {
                 Poll::Ready(Ok(()))
             }

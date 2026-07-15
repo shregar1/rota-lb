@@ -216,8 +216,8 @@ impl RetryPolicy for RetryOnError {
 pub fn is_transient_error(error: &Error) -> bool {
     match error {
         Error::Io(_) => true,
-        Error::Backend(msg) => {
-            let lower = msg.to_lowercase();
+        Error::Backend(ref e) => {
+            let lower = e.0.to_lowercase();
             lower.contains("timeout")
                 || lower.contains("timed out")
                 || lower.contains("timedout")

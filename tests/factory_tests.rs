@@ -20,7 +20,7 @@ struct MockFactory {
 impl BackendFactory for MockFactory {
     async fn create(&self) -> Result<BackendOutput, Error> {
         if self.fail {
-            return Err(Error::Factory("factory failed".into()));
+            return Err(Error::factory("factory failed"));
         }
         let _ = duplex(64);
         Ok(BackendOutput {

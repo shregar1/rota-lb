@@ -65,10 +65,10 @@ impl LoadBalancer {
         retry_policy: Option<Arc<dyn RetryPolicy + Send + Sync>>,
     ) -> Result<Self, Error> {
         if backends.is_empty() {
-            return Err(Error::NoBackends);
+            return Err(Error::no_backends());
         }
         if initial_metrics.len() != backends.len() {
-            return Err(Error::Factory(format!(
+            return Err(Error::factory(format!(
                 "initial_metrics.len() ({}) must equal backends.len() ({})",
                 initial_metrics.len(),
                 backends.len()
@@ -94,7 +94,7 @@ impl LoadBalancer {
         strategy: impl BalanceStrategy + 'static,
     ) -> Result<Self, Error> {
         if factories.is_empty() {
-            return Err(Error::NoBackends);
+            return Err(Error::no_backends());
         }
         let mut backends = Vec::with_capacity(factories.len());
         let mut metrics = Vec::with_capacity(factories.len());
@@ -159,7 +159,7 @@ impl LoadBalancer {
         // rather than calling into a strategy that may panic on
         // `0 % len`, `gen_range(0..0)`, etc.
         if self.backends.is_empty() {
-            return Err(Error::NoBackends);
+            return Err(Error::no_backends());
         }
 
         let idx = {
@@ -248,7 +248,7 @@ impl LoadBalancer {
             let conn_result = if let Some(timeout) = effective_timeout {
                 tokio::time::timeout(timeout, dial_fut)
                     .await
-                    .unwrap_or_else(|_| Err(Error::Backend("dial timeout".into())))
+                    .unwrap_or_else(|_| Err(Error::backend("dial timeout")))
             } else {
                 dial_fut.await
             };
@@ -382,7 +382,7 @@ impl LoadBalancer {
         strategy: Option<Box<dyn BalanceStrategy + 'static>>,
     ) -> Result<(), Error> {
         if new_backends.is_empty() {
-            return Err(Error::NoBackends);
+            return Err(Error::no_backends());
         }
         self.generation.fetch_add(1, Ordering::SeqCst);
         for mut backend in self.backends.drain(..) {
@@ -527,7 +527,7 @@ impl LoadBalancerBuilder {
     pub async fn build(self) -> Result<LoadBalancer, Error> {
         let strategy = self
             .strategy
-            .ok_or_else(|| Error::Factory("strategy required".into()))?;
+            .ok_or_else(|| Error::factory("strategy required"))?;
         let dial_timeout = self.dial_timeout;
         let retry_policy = self.retry_policy;
 
@@ -536,7 +536,7 @@ impl LoadBalancerBuilder {
                 let metrics = match self.initial_metrics {
                     Some(m) if m.len() == backends.len() => m,
                     Some(m) => {
-                        return Err(Error::Factory(format!(
+                        return Err(Error::factory(format!(
                             "initial_metrics.len() ({}) must equal backends.len() ({})",
                             m.len(),
                             backends.len()
@@ -555,7 +555,7 @@ impl LoadBalancerBuilder {
             (None, Some(factories)) => {
                 // For factories, we need to create them first then build
                 if factories.is_empty() {
-                    return Err(Error::NoBackends);
+                    return Err(Error::no_backends());
                 }
                 let mut created_backends = Vec::with_capacity(factories.len());
                 let mut created_metrics = Vec::with_capacity(factories.len());
@@ -570,7 +570,7 @@ impl LoadBalancerBuilder {
                 let final_metrics = match self.initial_metrics {
                     Some(m) if m.len() == factories.len() => m,
                     Some(m) => {
-                        return Err(Error::Factory(format!(
+                        return Err(Error::factory(format!(
                             "initial_metrics.len() ({}) must equal factories.len() ({})",
                             m.len(),
                             factories.len()
@@ -586,10 +586,10 @@ impl LoadBalancerBuilder {
                     retry_policy,
                 )
             }
-            (Some(_), Some(_)) => Err(Error::Factory(
-                "cannot set both backends and factories".into(),
+            (Some(_), Some(_)) => Err(Error::factory(
+                "cannot set both backends and factories",
             )),
-            (None, None) => Err(Error::Factory("backends or factories required".into())),
+            (None, None) => Err(Error::factory("backends or factories required")),
         }
     }
 }
@@ -683,22 +683,13 @@ impl AsyncWrite for GuardedConnection {
 /// error reason, regardless of which entry point the host uses.
 fn validate_dial_addr(addr: &str) -> Result<(), Error> {
     let Some((host, port)) = addr.rsplit_once(':') else {
-        return Err(Error::InvalidAddress {
-            addr: addr.to_owned(),
-            reason: "expected \"host:port\"",
-        });
+        return Err(Error::invalid_address(addr.to_owned(), "expected \"host:port\""));
     };
     if host.is_empty() {
-        return Err(Error::InvalidAddress {
-            addr: addr.to_owned(),
-            reason: "empty host",
-        });
+        return Err(Error::invalid_address(addr.to_owned(), "empty host"));
     }
     if port.parse::<u16>().map_or(true, |p| p == 0) {
-        return Err(Error::InvalidAddress {
-            addr: addr.to_owned(),
-            reason: "port must be 1-65535",
-        });
+        return Err(Error::invalid_address(addr.to_owned(), "port must be 1-65535"));
     }
     Ok(())
 }

@@ -175,10 +175,7 @@ fn echo_pool_with_rtt(rtts: &[Duration]) -> Vec<Box<dyn Backend>> {
 
 #[test]
 fn error_invalid_address_displays_addr_and_reason() {
-    let err = Error::InvalidAddress {
-        addr: "no-port".to_owned(),
-        reason: "missing port",
-    };
+    let err = Error::invalid_address("no-port".to_owned(), "missing port");
     let s = err.to_string();
     assert!(s.contains("no-port"));
     assert!(s.contains("missing port"));
@@ -187,7 +184,7 @@ fn error_invalid_address_displays_addr_and_reason() {
 #[test]
 fn error_no_backends_has_fixed_display() {
     assert_eq!(
-        Error::NoBackends.to_string(),
+        Error::no_backends().to_string(),
         "no backends available — pool is empty"
     );
 }
@@ -217,15 +214,15 @@ fn error_io_from_io_error() {
 
 #[test]
 fn error_debug_format_is_useful() {
-    let err = Error::NoBackends;
+    let err = Error::no_backends();
     let dbg = format!("{err:?}");
     assert!(dbg.contains("NoBackends"));
 }
 
 #[test]
 fn error_factory_and_backend_helpers_match_variants() {
-    assert!(matches!(Error::factory("x"), Error::Factory(s) if s == "x"));
-    assert!(matches!(Error::backend("y"), Error::Backend(s) if s == "y"));
+    assert!(matches!(Error::factory("x"), Error::Factory(ref e) if e.0 == "x"));
+    assert!(matches!(Error::backend("y"), Error::Backend(ref e) if e.0 == "y"));
 }
 
 // ===========================================================================
@@ -235,7 +232,7 @@ fn error_factory_and_backend_helpers_match_variants() {
 #[test]
 fn load_balancer_new_rejects_empty_pool() {
     let err = LoadBalancer::new(vec![], round_robin()).unwrap_err();
-    assert!(matches!(err, Error::NoBackends));
+    assert!(matches!(err, Error::NoBackends(_)));
 }
 
 #[tokio::test]
@@ -244,7 +241,7 @@ async fn from_factories_rejects_empty_factory_list() {
     let err = LoadBalancer::from_factories(factories, round_robin())
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::NoBackends));
+    assert!(matches!(err, Error::NoBackends(_)));
 }
 
 #[tokio::test]
@@ -317,7 +314,7 @@ async fn builder_requires_a_strategy() {
         .build()
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::Factory(m) if m.contains("strategy required")));
+    assert!(matches!(err, Error::Factory(ref e) if e.0.contains("strategy required")));
 }
 
 #[tokio::test]
@@ -339,7 +336,7 @@ async fn builder_rejects_both_backends_and_factories() {
         .build()
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::Factory(m) if m.contains("cannot set both")));
+    assert!(matches!(err, Error::Factory(ref e) if e.0.contains("cannot set both")));
 }
 
 #[tokio::test]
@@ -351,7 +348,7 @@ async fn builder_initial_metrics_length_mismatch_is_rejected() {
         .build()
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::Factory(m) if m.contains("must equal backends.len")));
+    assert!(matches!(err, Error::Factory(ref e) if e.0.contains("must equal backends.len")));
 }
 
 #[tokio::test]
@@ -374,7 +371,7 @@ async fn builder_initial_metrics_length_mismatch_on_factories_is_rejected() {
         .build()
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::Factory(m) if m.contains("must equal factories.len")));
+    assert!(matches!(err, Error::Factory(ref e) if e.0.contains("must equal factories.len")));
 }
 
 // ===========================================================================
@@ -385,14 +382,14 @@ async fn builder_initial_metrics_length_mismatch_on_factories_is_rejected() {
 async fn dial_rejects_empty_host() {
     let lb = LoadBalancer::new(echo_pool(1), round_robin()).unwrap();
     let err = lb.dial(":443").await.unwrap_err();
-    assert!(matches!(err, Error::InvalidAddress { reason, .. } if reason == "empty host"));
+    assert!(matches!(err, Error::InvalidAddress(ref e) if e.reason == "empty host"));
 }
 
 #[tokio::test]
 async fn dial_rejects_missing_port() {
     let lb = LoadBalancer::new(echo_pool(1), round_robin()).unwrap();
     let err = lb.dial("example.com").await.unwrap_err();
-    assert!(matches!(err, Error::InvalidAddress { reason, .. } if reason.contains("host:port")));
+    assert!(matches!(err, Error::InvalidAddress(ref e) if e.reason.contains("host:port")));
 }
 
 #[tokio::test]
@@ -400,7 +397,7 @@ async fn dial_rejects_port_zero() {
     let lb = LoadBalancer::new(echo_pool(1), round_robin()).unwrap();
     let err = lb.dial("example.com:0").await.unwrap_err();
     assert!(
-        matches!(err, Error::InvalidAddress { reason, .. } if reason == "port must be 1-65535")
+        matches!(err, Error::InvalidAddress(ref e) if e.reason == "port must be 1-65535")
     );
 }
 
@@ -409,7 +406,7 @@ async fn dial_rejects_unparseable_port() {
     let lb = LoadBalancer::new(echo_pool(1), round_robin()).unwrap();
     let err = lb.dial("example.com:abc").await.unwrap_err();
     assert!(
-        matches!(err, Error::InvalidAddress { reason, .. } if reason == "port must be 1-65535")
+        matches!(err, Error::InvalidAddress(ref e) if e.reason == "port must be 1-65535")
     );
 }
 
@@ -623,7 +620,7 @@ async fn retry_on_error_predicate_filters_by_error_type() {
     let backends: Vec<Box<dyn Backend>> = vec![Box::new(backend)];
     let policy = RetryOnError::new(
         FixedRetry::new(Duration::from_millis(1)),
-        |e| matches!(e, Error::Backend(msg) if msg.contains("retryable")),
+        |e| matches!(e, Error::Backend(ref e) if e.0.contains("retryable")),
     );
     let lb = LoadBalancer::builder()
         .backends(backends)
@@ -669,9 +666,9 @@ fn retry_policy_builder_is_clone() {
 
 #[test]
 fn is_transient_error_recognises_io_and_backend_timeout_strings() {
-    assert!(is_transient_error(&Error::Io(std::io::Error::other("x"))));
+    assert!(is_transient_error(&Error::from(std::io::Error::other("x"))));
     assert!(is_transient_error(&Error::backend("connection timeout")));
-    assert!(!is_transient_error(&Error::NoBackends));
+    assert!(!is_transient_error(&Error::no_backends()));
     assert!(!is_transient_error(&Error::backend("connection refused")));
 }
 
@@ -990,7 +987,7 @@ async fn replace_backends_swaps_pool() {
 async fn replace_backends_rejects_empty_pool() {
     let mut lb = LoadBalancer::new(echo_pool(2), round_robin()).unwrap();
     let err = lb.replace_backends(vec![], None).await.unwrap_err();
-    assert!(matches!(err, Error::NoBackends));
+    assert!(matches!(err, Error::NoBackends(_)));
 }
 
 #[tokio::test]

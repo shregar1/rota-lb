@@ -43,7 +43,7 @@ impl Backend for HealthMockBackend {
         let remaining = self.fail_count.load(Ordering::SeqCst);
         if remaining > 0 {
             self.fail_count.fetch_sub(1, Ordering::SeqCst);
-            return Err(Error::Backend("simulated health failure".into()));
+            return Err(Error::backend("simulated health failure"));
         }
         let (a, _b) = duplex(64);
         Ok(Box::pin(a))

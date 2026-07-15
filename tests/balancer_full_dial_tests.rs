@@ -39,7 +39,7 @@ impl Backend for FullDialBackend {
         let remaining = self.fail_count.load(Ordering::SeqCst);
         if remaining > 0 {
             self.fail_count.fetch_sub(1, Ordering::SeqCst);
-            return Err(Error::Backend(format!("{}: simulated failure", self.name)));
+            return Err(Error::backend(format!("{}: simulated failure", self.name)));
         }
         let (a, _b) = duplex(64);
         Ok(Box::pin(a))
@@ -66,8 +66,8 @@ async fn dial_timeout_triggers() {
         .unwrap();
     let r = lb.dial("a:80").await;
     assert!(r.is_err());
-    if let Err(Error::Backend(msg)) = r {
-        assert!(msg.contains("timeout") || msg.contains("dial"));
+    if let Err(Error::Backend(ref e)) = r {
+        assert!(e.0.contains("timeout") || e.0.contains("dial"));
     }
 }
 

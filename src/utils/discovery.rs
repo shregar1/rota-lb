@@ -331,7 +331,7 @@ pub mod dns {
                 trust_dns_resolver::config::ResolverConfig::default(),
                 trust_dns_resolver::config::ResolverOpts::default(),
             )
-            .map_err(|e| Error::Backend(format!("DNS resolver: {e}")))?;
+            .map_err(|e| Error::backend(format!("DNS resolver: {e}")))?;
             Ok(Self {
                 resolver,
                 service_name,
@@ -355,7 +355,7 @@ pub mod dns {
             let response = self
                 .resolver
                 .srv_lookup(&srv_name)
-                .map_err(|e| Error::Backend(format!("DNS lookup failed: {e}")))?;
+                .map_err(|e| Error::backend(format!("DNS lookup failed: {e}")))?;
 
             let mut descriptors = Vec::new();
             for srv in response.iter() {
@@ -407,9 +407,9 @@ pub mod consul {
             let settings = ConsulClientSettingsBuilder::default()
                 .address(consul_addr)
                 .build()
-                .map_err(|e| Error::Backend(format!("consul settings: {e}")))?;
+                .map_err(|e| Error::backend(format!("consul settings: {e}")))?;
             let client = ConsulClient::new(settings)
-                .map_err(|e| Error::Backend(format!("consul client: {e}")))?;
+                .map_err(|e| Error::backend(format!("consul client: {e}")))?;
             Ok(Self {
                 client,
                 service_name,
@@ -430,7 +430,7 @@ pub mod consul {
         async fn discover(&self) -> Result<Vec<BackendDescriptor>, Error> {
             let response = catalog::nodes_with_service(&self.client, &self.service_name, None)
                 .await
-                .map_err(|e| Error::Backend(format!("consul discovery: {e}")))?;
+                .map_err(|e| Error::backend(format!("consul discovery: {e}")))?;
 
             let mut descriptors = Vec::new();
             for entry in response.response {
@@ -516,7 +516,7 @@ pub mod etcd {
         pub async fn new(etcd_endpoints: Vec<String>, prefix: String) -> Result<Self, Error> {
             let client = Client::connect(etcd_endpoints, None)
                 .await
-                .map_err(|e| Error::Backend(format!("etcd connect: {e}")))?;
+                .map_err(|e| Error::backend(format!("etcd connect: {e}")))?;
             Ok(Self {
                 client: Mutex::new(client),
                 prefix,
@@ -536,13 +536,13 @@ pub mod etcd {
                     Some(etcd_client::GetOptions::new().with_prefix()),
                 )
                 .await
-                .map_err(|e| Error::Backend(format!("etcd get: {e}")))?;
+                .map_err(|e| Error::backend(format!("etcd get: {e}")))?;
 
             for kv in resp.kvs() {
                 let key = String::from_utf8(kv.key().to_vec())
-                    .map_err(|e| Error::Backend(format!("etcd key utf8: {e}")))?;
+                    .map_err(|e| Error::backend(format!("etcd key utf8: {e}")))?;
                 let value = String::from_utf8(kv.value().to_vec())
-                    .map_err(|e| Error::Backend(format!("etcd value utf8: {e}")))?;
+                    .map_err(|e| Error::backend(format!("etcd value utf8: {e}")))?;
 
                 if let Ok(addr) = value.parse::<std::net::SocketAddr>() {
                     descriptors.push(BackendDescriptor {

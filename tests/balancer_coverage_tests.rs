@@ -44,7 +44,7 @@ impl Backend for FullMockBackend {
         let remaining = self.fail_count.load(Ordering::SeqCst);
         if remaining > 0 {
             self.fail_count.fetch_sub(1, Ordering::SeqCst);
-            return Err(Error::Backend(format!("{}: simulated failure", self.name)));
+            return Err(Error::backend(format!("{}: simulated failure", self.name)));
         }
         let (a, _b) = duplex(64);
         Ok(Box::pin(a))
@@ -71,8 +71,8 @@ fn new_with_metrics_mismatched_lengths() {
     let metrics = vec![TunnelMetrics::default(), TunnelMetrics::default()];
     let result = LoadBalancer::new_with_metrics(backends, metrics, round_robin(), None, None);
     assert!(result.is_err());
-    if let Err(Error::Factory(msg)) = result {
-        assert!(msg.contains("initial_metrics.len"));
+    if let Err(Error::Factory(ref e)) = result {
+        assert!(e.0.contains("initial_metrics.len"));
     } else {
         panic!("Expected Factory error");
     }

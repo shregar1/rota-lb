@@ -93,6 +93,8 @@ pub mod constants;
 /// Enum types.
 pub mod enums;
 pub mod error;
+/// Structured error types.
+pub mod errors;
 pub mod utils;
 /// Core services (`LoadBalancer`, etc).
 pub mod services;

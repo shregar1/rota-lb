@@ -34,7 +34,7 @@ impl Backend for SlowBackend {
         let remaining = self.fail_count.load(Ordering::SeqCst);
         if remaining > 0 {
             self.fail_count.fetch_sub(1, Ordering::SeqCst);
-            return Err(Error::Backend("failure".into()));
+            return Err(Error::backend("failure"));
         }
         // Simulate a slow backend
         tokio::time::sleep(Duration::from_secs(10)).await;
